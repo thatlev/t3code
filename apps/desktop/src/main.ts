@@ -59,6 +59,115 @@ import * as DesktopWindow from "./window/DesktopWindow.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
 
+const CODEX_MICRO_COMMAND_CHANNEL = "desktop:codex-micro-command";
+
+function parseCodexMicroUrl(value: string) {
+  try {
+    const url = new URL(value);
+    if (
+      (url.protocol !== "t3code:" && url.protocol !== "t3code-dev:") ||
+      url.hostname !== "codex-micro" ||
+      url.pathname !== "/command"
+    ) {
+      return null;
+    }
+    const kind = url.searchParams.get("kind");
+    if (kind === "effort") {
+      return {
+        kind,
+        direction: url.searchParams.get("direction") === "-1" ? (-1 as const) : (1 as const),
+      };
+    }
+    if (kind === "focus") {
+      const environmentId = url.searchParams.get("environmentId");
+      const threadId = url.searchParams.get("threadId");
+      return {
+        kind,
+        ...(environmentId ? { environmentId } : {}),
+        ...(threadId ? { threadId } : {}),
+      };
+    }
+    if (kind === "action") {
+      const action = url.searchParams.get("action");
+      if (
+        action === "fast" ||
+        action === "new" ||
+        action === "fork" ||
+        action === "send" ||
+        action === "frontendMax" ||
+        action === "browser" ||
+        action === "terminal" ||
+        action === "sideChat" ||
+        action === "settings"
+      ) {
+        return { kind, action };
+      }
+    }
+  } catch {
+    // Ignore malformed or unrelated protocol URLs.
+  }
+  return null;
+}
+
+const pendingCodexMicroCommands: Array<NonNullable<ReturnType<typeof parseCodexMicroUrl>>> = [];
+
+function dispatchCodexMicroUrl(value: string) {
+  const command = parseCodexMicroUrl(value);
+  if (command === null) return;
+  const windows = Electron.BrowserWindow.getAllWindows();
+  if (windows.length === 0) {
+    pendingCodexMicroCommands.push(command);
+    return;
+  }
+  Electron.app.focus({ steal: true });
+  for (const window of windows) {
+    window.show();
+    window.focus();
+    window.webContents.send(CODEX_MICRO_COMMAND_CHANNEL, command);
+  }
+}
+
+Electron.app.on("open-url", (event, url) => {
+  event.preventDefault();
+  dispatchCodexMicroUrl(url);
+});
+Electron.app.on("second-instance", (_event, argv) => {
+  for (const value of argv) dispatchCodexMicroUrl(value);
+});
+Electron.app.on("browser-window-created", (_event, window) => {
+  window.webContents.once("did-finish-load", () => {
+    for (const command of pendingCodexMicroCommands.splice(0)) {
+      window.webContents.send(CODEX_MICRO_COMMAND_CHANNEL, command);
+    }
+  });
+});
+for (const value of process.argv) {
+  if (value.startsWith("t3code:") || value.startsWith("t3code-dev:")) {
+    dispatchCodexMicroUrl(value);
+  }
+}
+
+Electron.protocol.registerSchemesAsPrivileged([
+  {
+    scheme: ElectronProtocol.DESKTOP_PRODUCTION_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+    },
+  },
+  {
+    scheme: ElectronProtocol.DESKTOP_DEVELOPMENT_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+    },
+  },
+]);
+
 const desktopEnvironmentLayer = Layer.unwrap(
   Effect.gen(function* () {
     const metadata = yield* Effect.service(ElectronApp.ElectronApp).pipe(

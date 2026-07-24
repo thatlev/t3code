@@ -9,10 +9,25 @@ import * as Schema from "effect/Schema";
 import {
   buildClaudeCapabilitiesProbeQueryOptions,
   CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES,
+  getClaudeModelCapabilities,
+  normalizeClaudeCliEffort,
   probeClaudeCapabilities,
 } from "./ClaudeProvider.ts";
 
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
+
+it("exposes Claude Opus 5 with its supported reasoning ladder", () => {
+  const capabilities = getClaudeModelCapabilities("claude-opus-5");
+  const effort = capabilities.optionDescriptors?.find((option) => option.id === "effort");
+  if (!effort || effort.type !== "select") {
+    assert.fail("Claude Opus 5 should expose a select reasoning option");
+  }
+  assert.deepEqual(
+    effort.options.map((option) => option.id),
+    ["low", "medium", "high", "xhigh", "max"],
+  );
+  assert.equal(normalizeClaudeCliEffort("xhigh", "claude-opus-5"), "xhigh");
+});
 
 it("isolates Claude capability probes without dropping workspace setting sources", () => {
   const abortController = new AbortController();

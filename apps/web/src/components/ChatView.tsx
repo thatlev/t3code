@@ -118,6 +118,12 @@ import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import {
+  CODEX_MICRO_CHAT_COMMAND_EVENT,
+  CODEX_MICRO_NEW_THREAD_EVENT,
+  type CodexMicroChatCommand,
+} from "../codexMicro/controller";
+import { expandBuiltinSkills } from "../builtinSkills";
+import {
   selectActiveRightPanel,
   selectActiveRightPanelSurface,
   selectThreadRightPanelState,
@@ -4579,9 +4585,11 @@ function ChatViewContent(props: ChatViewProps) {
       (text, annotation) => appendPreviewAnnotationPrompt(text, annotation),
       messageTextWithContexts,
     );
-    const messageTextForSend = appendReviewCommentsToPrompt(
-      messageTextWithPreviewAnnotations,
-      composerReviewCommentsSnapshot,
+    const messageTextForSend = expandBuiltinSkills(
+      appendReviewCommentsToPrompt(
+        messageTextWithPreviewAnnotations,
+        composerReviewCommentsSnapshot,
+      ),
     );
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
@@ -4869,6 +4877,88 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [activeThreadId, environmentId, respondToThreadApproval, setThreadError],
   );
+
+  useEffect(() => {
+    const onCodexMicroCommand = (event: Event) => {
+      const command = (event as CustomEvent<CodexMicroChatCommand>).detail;
+      if (!command) return;
+
+      switch (command.kind) {
+        case "fast":
+          composerRef.current?.toggleFastMode();
+          break;
+        case "approve":
+          if (activePendingApproval) {
+            void onRespondToApproval(activePendingApproval.requestId, "accept");
+          }
+          break;
+        case "decline":
+          if (activePendingApproval) {
+            void onRespondToApproval(activePendingApproval.requestId, "decline");
+          }
+          break;
+        case "fork":
+          toastManager.add({
+            title: "Conversation forking is unavailable",
+            description:
+              "T3 Code does not expose a provider-safe conversation fork yet, so Codex Micro did not create an unrelated blank chat.",
+            type: "info",
+          });
+          break;
+        case "send":
+          void onSend();
+          break;
+        case "modelPicker":
+          composerRef.current?.toggleModelPicker();
+          break;
+        case "effort":
+          composerRef.current?.cycleReasoningEffort(command.direction);
+          break;
+        case "plan":
+          handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
+          break;
+        case "browser":
+          if (activeThreadRef) {
+            const activeTabId = activePreviewState.activeTabId;
+            if (activeTabId) {
+              useRightPanelStore.getState().openBrowser(activeThreadRef, activeTabId);
+            } else {
+              createBrowserSurface();
+            }
+          }
+          break;
+        case "terminal":
+          if (!terminalUiState.terminalOpen) {
+            toggleTerminalVisibility();
+          } else {
+            setTerminalFocusRequestId((value) => value + 1);
+          }
+          break;
+        case "insert":
+          if (composerRef.current?.insertTextAtEnd(command.text) && command.submit) {
+            window.setTimeout(() => void onSend(), 0);
+          }
+          break;
+      }
+    };
+
+    window.addEventListener(CODEX_MICRO_CHAT_COMMAND_EVENT, onCodexMicroCommand);
+    return () => {
+      window.removeEventListener(CODEX_MICRO_CHAT_COMMAND_EVENT, onCodexMicroCommand);
+    };
+  }, [
+    activePendingApproval,
+    composerRef,
+    handleInteractionModeChange,
+    interactionMode,
+    onRespondToApproval,
+    onSend,
+    activeThreadRef,
+    activePreviewState.activeTabId,
+    createBrowserSurface,
+    terminalUiState.terminalOpen,
+    toggleTerminalVisibility,
+  ]);
 
   const onRespondToUserInput = useCallback(
     async (requestId: ApprovalRequestId, answers: Record<string, unknown>) => {

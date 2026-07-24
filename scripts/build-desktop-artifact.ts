@@ -1426,6 +1426,16 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
+      // Local distribution builds still need a complete bundle seal. Without
+      // this, Electron's linker-signed executable launches locally but
+      // `codesign --verify --deep --strict` rejects the app and copied DMGs can
+      // behave inconsistently. `-` is Apple's ad-hoc identity: no certificate,
+      // account, network request, or notarization is involved.
+      ...(!signed ? { identity: "-" } : {}),
+      extendInfo: {
+        NSBluetoothAlwaysUsageDescription:
+          "T3 Code uses Bluetooth to connect to the Codex Micro iPhone remote.",
+      },
       protocols: [
         {
           name: "T3 Code",

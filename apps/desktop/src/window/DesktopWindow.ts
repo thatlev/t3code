@@ -181,6 +181,21 @@ export function isRetryableDevelopmentRendererLoadFailure(input: {
   );
 }
 
+export function selectCodexMicroBluetoothDevice(
+  devices: ReadonlyArray<Pick<Electron.BluetoothDevice, "deviceId" | "deviceName">>,
+): string | null {
+  const namedRemote = devices.find(
+    (device) => device.deviceName.trim().toLowerCase() === "codex micro",
+  );
+  if (namedRemote !== undefined) return namedRemote.deviceId;
+
+  // Chromium has already filtered this picker request by the Codex Micro
+  // service UUID. macOS may expose the iOS peripheral under the phone's system
+  // name (for example "iPhone L") or omit its local name entirely, so the
+  // first service-matching candidate is the reliable fallback.
+  return devices[0]?.deviceId ?? null;
+}
+
 function getWindowTitleBarOptions(
   shouldUseDarkColors: boolean,
   platform: NodeJS.Platform,
@@ -429,6 +444,32 @@ export const make = Effect.gen(function* () {
     flushMainWindowBounds = flushBoundsPersist;
 
     yield* previewManager.setMainWindow(window);
+    let bluetoothSelectionFiber: Fiber.Fiber<void, never> | undefined;
+    window.webContents.on("select-bluetooth-device", (event, devices, callback) => {
+      event.preventDefault();
+      const deviceId = selectCodexMicroBluetoothDevice(devices);
+      if (deviceId !== null) {
+        if (bluetoothSelectionFiber !== undefined) {
+          const fiber = bluetoothSelectionFiber;
+          bluetoothSelectionFiber = undefined;
+          runFork(Fiber.interrupt(fiber));
+        }
+        callback(deviceId);
+        return;
+      }
+      if (bluetoothSelectionFiber === undefined) {
+        bluetoothSelectionFiber = runFork(
+          Effect.sleep(30_000).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                bluetoothSelectionFiber = undefined;
+                callback("");
+              }),
+            ),
+          ),
+        );
+      }
+    });
     window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
       if (
         typeof params.partition !== "string" ||
@@ -522,6 +563,11 @@ export const make = Effect.gen(function* () {
     window.on("maximize", scheduleBoundsPersist);
     window.on("unmaximize", scheduleBoundsPersist);
     window.on("close", () => {
+      if (bluetoothSelectionFiber !== undefined) {
+        const fiber = bluetoothSelectionFiber;
+        bluetoothSelectionFiber = undefined;
+        runFork(Fiber.interrupt(fiber));
+      }
       runFork(flushBoundsPersist);
     });
 

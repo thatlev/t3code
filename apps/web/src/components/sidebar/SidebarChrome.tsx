@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { SettingsIcon } from "lucide-react";
+import { Grid3X3Icon, SettingsIcon } from "lucide-react";
 import { memo, useCallback } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 
@@ -106,20 +106,35 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
     }
     void navigate({ to: "/settings" });
   }, [isMobile, navigate, setOpenMobile]);
+  const handleCodexMicroClick = useCallback(() => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+    void navigate({ to: "/settings/codex-micro" });
+  }, [isMobile, navigate, setOpenMobile]);
 
   return (
     <SidebarFooter className="p-2">
       <SidebarProviderUpdatePill />
       <SidebarUpdatePill />
       <SidebarMenu>
-        <SidebarMenuItem>
+        <SidebarMenuItem className="flex items-center gap-1">
           <SidebarMenuButton
             size="sm"
-            className="h-8 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+            className="h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
             onClick={handleSettingsClick}
           >
             <SettingsIcon className="size-4.5 shrink-0" />
             <span>Settings</span>
+          </SidebarMenuButton>
+          <SidebarMenuButton
+            size="sm"
+            className="size-8 shrink-0 justify-center rounded-md p-0 text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+            onClick={handleCodexMicroClick}
+            aria-label="Codex Micro settings"
+            title="Codex Micro settings"
+          >
+            <Grid3X3Icon className="size-4.5 shrink-0" />
           </SidebarMenuButton>
         </SidebarMenuItem>
       </SidebarMenu>

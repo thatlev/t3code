@@ -1022,6 +1022,7 @@ export interface DesktopBridge {
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
   onMenuAction: (listener: (action: string) => void) => () => void;
+  onCodexMicroCommand: (listener: (command: DesktopCodexMicroCommand) => void) => () => void;
   getWindowFullscreenState: () => boolean;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;
@@ -1036,6 +1037,27 @@ export interface DesktopBridge {
    */
   preview?: DesktopPreviewBridge;
 }
+
+export type DesktopCodexMicroCommand =
+  | { readonly kind: "effort"; readonly direction: -1 | 1 }
+  | {
+      readonly kind: "action";
+      readonly action:
+        | "fast"
+        | "new"
+        | "fork"
+        | "send"
+        | "frontendMax"
+        | "browser"
+        | "terminal"
+        | "sideChat"
+        | "settings";
+    }
+  | {
+      readonly kind: "focus";
+      readonly environmentId?: string;
+      readonly threadId?: string;
+    };
 
 export interface DesktopPreviewBridge {
   createTab: (tabId: string) => Promise<void>;

@@ -74,6 +74,10 @@ function makeFakeBrowserWindow() {
     replaceMisspelling: vi.fn(),
     send: vi.fn(),
     setWindowOpenHandler: vi.fn(),
+    session: {
+      setPermissionCheckHandler: vi.fn(),
+      setPermissionRequestHandler: vi.fn(),
+    },
   };
 
   const window = {
@@ -121,6 +125,32 @@ function makeFakeBrowserWindow() {
     windowListeners,
   };
 }
+
+describe("Codex Micro Bluetooth device selection", () => {
+  it("prefers the phone remote by its advertised name", () => {
+    assert.strictEqual(
+      DesktopWindow.selectCodexMicroBluetoothDevice([
+        { deviceId: "unnamed", deviceName: "" },
+        { deviceId: "headphones", deviceName: "Headphones" },
+        { deviceId: "phone", deviceName: "Codex Micro" },
+      ]),
+      "phone",
+    );
+  });
+
+  it("accepts a service-filtered iPhone candidate using its system name", () => {
+    assert.strictEqual(
+      DesktopWindow.selectCodexMicroBluetoothDevice([
+        { deviceId: "phone", deviceName: "iPhone L" },
+      ]),
+      "phone",
+    );
+  });
+
+  it("returns no selection when discovery has no candidates", () => {
+    assert.strictEqual(DesktopWindow.selectCodexMicroBluetoothDevice([]), null);
+  });
+});
 
 const desktopAssetsLayer = Layer.succeed(DesktopAssets.DesktopAssets, {
   iconPaths: Effect.succeed({

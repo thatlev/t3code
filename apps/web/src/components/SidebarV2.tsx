@@ -29,6 +29,7 @@ import {
   EllipsisIcon,
   MessageSquareIcon,
   PlusIcon,
+  PinIcon,
   SearchIcon,
   ServerIcon,
   SquarePenIcon,
@@ -54,6 +55,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { isElectron } from "../env";
+import { useCodexMicroIsPinned } from "../codexMicro/controller";
 import {
   resolveShortcutCommand,
   shortcutLabelForCommand,
@@ -414,6 +416,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     [thread.environmentId, thread.id],
   );
   const threadKey = scopedThreadKey(threadRef);
+  const isCodexMicroPinned = useCodexMicroIsPinned(thread.environmentId, thread.id);
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
   const openPrLink = useOpenPrLink();
@@ -682,32 +685,37 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
       className="min-w-0 flex-1 rounded-sm border border-input bg-card px-1 text-sm font-medium text-card-foreground outline-none focus:border-foreground"
     />
   ) : (
-    <span
-      className={cn(
-        "min-w-0 flex-1 text-sm",
-        shouldRecede ? "font-normal" : "font-medium",
-        variant === "card"
-          ? cn(
-              "truncate",
-              isUnread || isWoke
-                ? "text-foreground"
-                : shouldRecede
-                  ? "text-muted-foreground/80"
-                  : status === "failed"
-                    ? "text-foreground/95"
-                    : "text-foreground/90",
-            )
-          : cn(
-              "truncate group-hover/v2-row:text-foreground",
-              props.isActive || isWoke
-                ? "text-foreground"
-                : isUnread
-                  ? "text-muted-foreground"
-                  : "text-muted-foreground/70",
-            ),
-      )}
-    >
-      {thread.title}
+    <span className="flex min-w-0 flex-1 items-center gap-1.5">
+      {isCodexMicroPinned ? (
+        <PinIcon className="size-3 shrink-0 text-violet-500" aria-label="Pinned to Codex Micro" />
+      ) : null}
+      <span
+        className={cn(
+          "min-w-0 flex-1 text-sm",
+          shouldRecede ? "font-normal" : "font-medium",
+          variant === "card"
+            ? cn(
+                "truncate",
+                isUnread || isWoke
+                  ? "text-foreground"
+                  : shouldRecede
+                    ? "text-muted-foreground/80"
+                    : status === "failed"
+                      ? "text-foreground/95"
+                      : "text-foreground/90",
+              )
+            : cn(
+                "truncate group-hover/v2-row:text-foreground",
+                props.isActive || isWoke
+                  ? "text-foreground"
+                  : isUnread
+                    ? "text-muted-foreground"
+                    : "text-muted-foreground/70",
+              ),
+        )}
+      >
+        {thread.title}
+      </span>
     </span>
   );
 

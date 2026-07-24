@@ -111,6 +111,9 @@ export interface CursorAdapterLiveOptions {
    * the latest snapshot so the closure isn't stale.
    */
   readonly resolveSettings?: Effect.Effect<CursorSettings>;
+  readonly provider?: ProviderDriverKind;
+  readonly providerName?: string;
+  readonly makeRuntime?: typeof makeCursorAcpRuntime;
 }
 
 interface PendingApproval {
@@ -315,7 +318,9 @@ export function makeCursorAdapter(
   options?: CursorAdapterLiveOptions,
 ) {
   return Effect.gen(function* () {
-    const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("cursor");
+    const PROVIDER = options?.provider ?? ProviderDriverKind.make("cursor");
+    const providerName = options?.providerName ?? "Cursor";
+    const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make(PROVIDER);
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -532,7 +537,7 @@ export function makeCursorAdapter(
             : cursorSettings;
 
           const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
-          const acp = yield* makeCursorAcpRuntime({
+          const acp = yield* (options?.makeRuntime ?? makeCursorAcpRuntime)({
             cursorSettings: effectiveCursorSettings,
             ...(options?.environment ? { environment: options.environment } : {}),
             childProcessSpawner,
@@ -893,7 +898,7 @@ export function makeCursorAdapter(
             ...(yield* makeEventStamp()),
             provider: PROVIDER,
             threadId: input.threadId,
-            payload: { state: "ready", reason: "Cursor ACP session ready" },
+            payload: { state: "ready", reason: `${providerName} ACP session ready` },
           });
           yield* offerRuntimeEvent({
             type: "thread.started",

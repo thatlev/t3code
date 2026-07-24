@@ -21,6 +21,7 @@ import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { primaryServerKeybindingsAtom } from "~/state/server";
+import { CODEX_MICRO_NEW_THREAD_EVENT } from "../codexMicro/controller";
 
 function ChatRouteGlobalShortcuts() {
   const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
@@ -55,6 +56,21 @@ function ChatRouteGlobalShortcuts() {
       ? selectActiveRightPanel(state.byThreadKey, routeThreadRef) === "preview"
       : false,
   );
+  useEffect(() => {
+    const onCodexMicroNewThread = () => {
+      void startNewThreadFromContext({
+        activeDraftThread,
+        activeThread: activeThread ?? undefined,
+        defaultProjectRef,
+        handleNewThread,
+      });
+    };
+    window.addEventListener(CODEX_MICRO_NEW_THREAD_EVENT, onCodexMicroNewThread);
+    return () => {
+      window.removeEventListener(CODEX_MICRO_NEW_THREAD_EVENT, onCodexMicroNewThread);
+    };
+  }, [activeDraftThread, activeThread, defaultProjectRef, handleNewThread]);
+
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
