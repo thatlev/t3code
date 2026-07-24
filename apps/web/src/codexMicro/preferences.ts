@@ -15,6 +15,7 @@ export type CodexMicroAction =
   | "new"
   | "pin"
   | "fork"
+  | "clear"
   | "send"
   | "frontendMax"
   | "browser"
@@ -51,6 +52,13 @@ export const CODEX_MICRO_ACTIONS: ReadonlyArray<{
     shortLabel: "FORK",
     symbol: "arrow.triangle.branch",
     accent: 0x5856d6,
+  },
+  {
+    value: "clear",
+    label: "Clear message bar",
+    shortLabel: "CLEAR",
+    symbol: "trash",
+    accent: 0x5b6675,
   },
   { value: "send", label: "Send prompt", shortLabel: "SEND", symbol: "arrow.up", accent: 0x168a55 },
   {
@@ -91,7 +99,7 @@ const CHANGE_EVENT = "t3-codex-micro-preferences-changed";
 export const DEFAULT_CODEX_MICRO_PREFERENCES: CodexMicroPreferences = {
   brightness: 100,
   autoDimSeconds: 180,
-  actionKeys: ["fast", "new", "pin", "fork"],
+  actionKeys: ["fast", "new", "pin", "clear"],
   joystick: {
     up: "frontendMax",
     right: "browser",

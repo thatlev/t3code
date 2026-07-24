@@ -6,6 +6,7 @@ import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import type * as EffectAcpErrors from "effect-acp/errors";
 
+import { CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES } from "../Layers/CursorProvider.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
 type KimiAcpRuntimeSettings = Pick<KimiSettings, "binaryPath">;
@@ -45,6 +46,7 @@ export const makeKimiAcpRuntime = (
         ...input,
         spawn: buildKimiAcpSpawnInput(input.cursorSettings, input.cwd, input.environment),
         authMethodId: "login",
+        clientCapabilities: CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES,
       }).pipe(
         Layer.provide(
           Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),

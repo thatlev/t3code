@@ -3,6 +3,7 @@ import {
   BatteryIcon,
   BluetoothIcon,
   BoltIcon,
+  CheckIcon,
   CircleAlertIcon,
   GitForkIcon,
   GlobeIcon,
@@ -13,9 +14,10 @@ import {
   SendIcon,
   SquarePenIcon,
   TerminalIcon,
+  Trash2Icon,
   WandSparklesIcon,
 } from "lucide-react";
-import { type CSSProperties, type ReactNode, useSyncExternalStore } from "react";
+import { type CSSProperties, type ReactNode, useState, useSyncExternalStore } from "react";
 
 import { resetCodexMicroPins } from "../../codexMicro/controller";
 import {
@@ -30,7 +32,11 @@ import {
 import { codexMicroRemote } from "../../codexMicro/remote";
 import { isElectron } from "../../env";
 import { Button } from "../ui/button";
+import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
 import { SettingsPageContainer } from "./settingsLayout";
+
+const DEVICE_KEY_CLASS =
+  "flex min-w-0 items-center justify-center rounded-[10px] border border-[#484c58] bg-[#202228] text-[#f5f5f6] shadow-[0_2px_3px_rgba(0,0,0,0.3)]";
 
 function SettingLine({
   title,
@@ -80,7 +86,7 @@ function DeviceKey({
       aria-label={label}
       title={label}
       style={style}
-      className={`flex min-w-0 items-center justify-center rounded-[10px] border border-[#484c58] bg-[#202228] text-[#f5f5f6] shadow-[0_2px_3px_rgba(0,0,0,0.3)] ${className}`}
+      className={`${DEVICE_KEY_CLASS} ${className}`}
     >
       {children}
     </div>
@@ -134,6 +140,8 @@ function ActionIcon({ action }: { action: CodexMicroAction }) {
       return <PinIcon className={className} />;
     case "fork":
       return <GitForkIcon className={className} />;
+    case "clear":
+      return <Trash2Icon className={className} />;
     case "send":
       return <SendIcon className={className} />;
     case "frontendMax":
@@ -145,6 +153,117 @@ function ActionIcon({ action }: { action: CodexMicroAction }) {
     case "sideChat":
       return <PanelLeftIcon className={className} />;
   }
+}
+
+function ActionPicker({
+  title,
+  value,
+  onChange,
+}: {
+  title: string;
+  value: CodexMicroAction;
+  onChange: (value: CodexMicroAction) => void;
+}) {
+  return (
+    <div className="w-56 p-1">
+      <PopoverTitle className="px-2 pb-2 pt-1 text-xs font-medium text-muted-foreground">
+        {title}
+      </PopoverTitle>
+      <div className="grid gap-0.5">
+        {CODEX_MICRO_ACTIONS.map((action) => (
+          <button
+            key={action.value}
+            type="button"
+            className="flex h-8 items-center gap-2 rounded-md px-2 text-left text-[13px] text-foreground outline-none transition-colors hover:bg-accent focus-visible:bg-accent"
+            onClick={() => onChange(action.value)}
+          >
+            <ActionIcon action={action.value} />
+            <span className="flex-1">{action.label}</span>
+            {action.value === value ? <CheckIcon className="size-3.5 text-blue-500" /> : null}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function EditableActionKey({
+  index,
+  value,
+  onChange,
+}: {
+  index: number;
+  value: CodexMicroAction;
+  onChange: (value: CodexMicroAction) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const descriptor = CODEX_MICRO_ACTIONS.find((item) => item.value === value)!;
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        aria-label={`Action key ${index + 1}: ${descriptor.label}. Click to change.`}
+        title={`${descriptor.label} · Click to change`}
+        className={`${DEVICE_KEY_CLASS} cursor-pointer outline-none transition-[border-color,background-color,transform] hover:border-blue-400/80 hover:bg-[#272b34] focus-visible:ring-2 focus-visible:ring-blue-400 data-popup-open:border-blue-400 data-popup-open:bg-[#272b34]`}
+      >
+        <ActionIcon action={value} />
+      </PopoverTrigger>
+      <PopoverPopup side="bottom" align="center" sideOffset={8} viewportClassName="p-1">
+        <ActionPicker
+          title={`Action key ${index + 1}`}
+          value={value}
+          onChange={(action) => {
+            onChange(action);
+            setOpen(false);
+          }}
+        />
+      </PopoverPopup>
+    </Popover>
+  );
+}
+
+function EditableJoystick({
+  value,
+  onChange,
+}: {
+  value: Readonly<Record<CodexMicroJoystickDirection, CodexMicroAction>>;
+  onChange: (direction: CodexMicroJoystickDirection, action: CodexMicroAction) => void;
+}) {
+  return (
+    <Popover>
+      <PopoverTrigger
+        aria-label="Navigation joystick. Click to change directional actions."
+        title="Joystick · Click to change"
+        className={`${DEVICE_KEY_CLASS} cursor-pointer outline-none transition-[border-color,background-color] hover:border-blue-400/80 hover:bg-[#272b34] focus-visible:ring-2 focus-visible:ring-blue-400 data-popup-open:border-blue-400 data-popup-open:bg-[#272b34]`}
+      >
+        <span className="size-7 rounded-full bg-[#101114] shadow-[inset_0_3px_5px_#050506,0_0_0_2px_#30333c]" />
+      </PopoverTrigger>
+      <PopoverPopup side="right" align="start" sideOffset={8} viewportClassName="p-2">
+        <div className="w-72 p-1">
+          <div className="px-2 pb-2 pt-1">
+            <PopoverTitle className="text-sm font-medium text-foreground">
+              Analog stick
+            </PopoverTitle>
+            <div className="text-xs text-muted-foreground">Choose what each direction triggers</div>
+          </div>
+          <div className="grid gap-1">
+            {(["up", "right", "down", "left"] as const).map((direction) => (
+              <label
+                key={direction}
+                className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-[13px] capitalize text-foreground hover:bg-accent/60"
+              >
+                <span>{direction}</span>
+                <ActionSelect
+                  label={`Joystick ${direction}`}
+                  value={value[direction]}
+                  onChange={(action) => onChange(direction, action)}
+                />
+              </label>
+            ))}
+          </div>
+        </div>
+      </PopoverPopup>
+    </Popover>
+  );
 }
 
 function CodexMicroPreview() {
@@ -187,9 +306,14 @@ function CodexMicroPreview() {
           />
           {agent(0)}
           {agent(1)}
-          <DeviceKey label="Navigation joystick">
-            <span className="size-7 rounded-full bg-[#101114] shadow-[inset_0_3px_5px_#050506,0_0_0_2px_#30333c]" />
-          </DeviceKey>
+          <EditableJoystick
+            value={preferences.joystick}
+            onChange={(direction, action) =>
+              setCodexMicroPreferences({
+                joystick: { ...preferences.joystick, [direction]: action },
+              })
+            }
+          />
         </div>
         <div className="grid grid-cols-4 gap-[5px]">
           {agent(2)}
@@ -198,14 +322,23 @@ function CodexMicroPreview() {
           {agent(5)}
         </div>
         <div className="grid grid-cols-4 gap-[5px]">
-          {preferences.actionKeys.map((action, index) => {
-            const descriptor = CODEX_MICRO_ACTIONS.find((item) => item.value === action)!;
-            return (
-              <DeviceKey key={index} label={descriptor.label}>
-                <ActionIcon action={action} />
-              </DeviceKey>
-            );
-          })}
+          {preferences.actionKeys.map((action, index) => (
+            <EditableActionKey
+              key={index}
+              index={index}
+              value={action}
+              onChange={(value) => {
+                const next = [...preferences.actionKeys] as [
+                  CodexMicroAction,
+                  CodexMicroAction,
+                  CodexMicroAction,
+                  CodexMicroAction,
+                ];
+                next[index] = value;
+                setCodexMicroPreferences({ actionKeys: next });
+              }}
+            />
+          ))}
         </div>
         <div className="grid grid-cols-[50px_105px_50px] gap-[5px]">
           <div className="relative flex items-center justify-center" aria-label="Connection status">
@@ -216,8 +349,17 @@ function CodexMicroPreview() {
               <i className="size-1 rounded-full bg-[#4f525a]" />
             </span>
           </div>
-          <DeviceKey label="Push to talk">
-            <MicIcon className="size-5" />
+          <DeviceKey
+            label={workspaceState?.nativeVoiceActive ? "macOS Dictation active" : "Push to talk"}
+            className={
+              workspaceState?.nativeVoiceActive
+                ? "border-emerald-400/80 bg-emerald-500/20 text-emerald-300"
+                : ""
+            }
+          >
+            <MicIcon
+              className={`size-5 ${workspaceState?.nativeVoiceActive ? "animate-pulse" : ""}`}
+            />
           </DeviceKey>
           <DeviceKey label="Send prompt">
             <SendIcon className="size-4.5" />
@@ -459,49 +601,9 @@ export function CodexMicroSettings() {
 
           <CodexMicroPreview />
 
-          {preferences.actionKeys.map((action, index) => (
-            <SettingLine
-              key={`action-${index}`}
-              title={`Action key ${index + 1}`}
-              description={`Physical key ACT0${index + 6}, shown left-to-right on the third row`}
-              control={
-                <ActionSelect
-                  label={`Action key ${index + 1}`}
-                  value={action}
-                  onChange={(value) => {
-                    const next = [...preferences.actionKeys] as [
-                      CodexMicroAction,
-                      CodexMicroAction,
-                      CodexMicroAction,
-                      CodexMicroAction,
-                    ];
-                    next[index] = value;
-                    setCodexMicroPreferences({ actionKeys: next });
-                  }}
-                />
-              }
-            />
-          ))}
-          {(["up", "right", "down", "left"] as const).map(
-            (direction: CodexMicroJoystickDirection) => (
-              <SettingLine
-                key={`joystick-${direction}`}
-                title={`Joystick ${direction}`}
-                description={`Action triggered when the stick moves ${direction}`}
-                control={
-                  <ActionSelect
-                    label={`Joystick ${direction}`}
-                    value={preferences.joystick[direction]}
-                    onChange={(value) =>
-                      setCodexMicroPreferences({
-                        joystick: { ...preferences.joystick, [direction]: value },
-                      })
-                    }
-                  />
-                }
-              />
-            ),
-          )}
+          <div className="border-b border-border/70 py-3 text-center text-xs text-muted-foreground">
+            Click an action key or the joystick in the preview to change it.
+          </div>
           <SettingLine
             title="Microphone key"
             description="Starts and stops macOS Dictation in the active T3 composer"

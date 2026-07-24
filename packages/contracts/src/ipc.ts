@@ -1021,6 +1021,10 @@ export interface DesktopBridge {
     position?: { x: number; y: number },
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
+  setMacDictation: (active: boolean) => Promise<{
+    readonly active: boolean;
+    readonly error: string | null;
+  }>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   onCodexMicroCommand: (listener: (command: DesktopCodexMicroCommand) => void) => () => void;
   getWindowFullscreenState: () => boolean;
@@ -1046,6 +1050,7 @@ export type DesktopCodexMicroCommand =
         | "fast"
         | "new"
         | "fork"
+        | "clear"
         | "send"
         | "frontendMax"
         | "browser"

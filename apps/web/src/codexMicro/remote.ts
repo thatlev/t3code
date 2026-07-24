@@ -74,6 +74,7 @@ export type CodexMicroWorkspaceState = {
   }>;
   readonly pins: ReadonlyArray<string | null>;
   readonly selected?: string;
+  readonly nativeVoiceActive?: boolean;
   readonly slots: ReadonlyArray<{
     readonly id: number;
     readonly c: number;
@@ -118,6 +119,7 @@ class CodexMicroRemote {
   private livenessTimer: number | null = null;
   private reconnectAttempt = 0;
   private writeQueue = Promise.resolve();
+  private workspaceWriteScheduled = false;
 
   getSnapshot = (): CodexMicroRemoteSnapshot => this.snapshot;
   getWorkspaceState = (): CodexMicroWorkspaceState | null => this.workspaceState;
@@ -135,19 +137,28 @@ class CodexMicroRemote {
   async restore(): Promise<void> {
     const bluetooth = this.bluetooth();
     if (
-      !bluetooth?.getDevices ||
+      !bluetooth ||
+      !this.snapshot.autoReconnect ||
       this.snapshot.phase === "connected" ||
-      this.snapshot.phase === "connecting"
+      this.snapshot.phase === "connecting" ||
+      this.snapshot.phase === "scanning"
     ) {
       return;
     }
     try {
-      const devices = await bluetooth.getDevices();
+      const devices = bluetooth.getDevices ? await bluetooth.getDevices() : [];
       const saved = devices.find((device) => device.name === "Codex Micro") ?? devices[0];
       if (saved) {
         await this.connectDevice(saved);
+        return;
       }
+      await this.requestAndConnect(bluetooth, true);
     } catch (error) {
+      if (error instanceof DOMException && error.name === "NotFoundError") {
+        this.update({ phase: "disconnected", error: null });
+        this.scheduleReconnect();
+        return;
+      }
       this.fail(error);
       this.scheduleReconnect();
     }
@@ -160,13 +171,9 @@ class CodexMicroRemote {
       return;
     }
 
-    this.update({ phase: "scanning", error: null });
+    this.snapshot = { ...this.snapshot, autoReconnect: true };
     try {
-      const device = await bluetooth.requestDevice({
-        filters: [{ services: [CODEX_MICRO_SERVICE_UUID] }],
-        optionalServices: [CODEX_MICRO_SERVICE_UUID],
-      });
-      await this.connectDevice(device);
+      await this.requestAndConnect(bluetooth, false);
     } catch (error) {
       if (error instanceof DOMException && error.name === "NotFoundError") {
         this.update({ phase: "disconnected", error: null });
@@ -174,6 +181,18 @@ class CodexMicroRemote {
       }
       this.fail(error);
     }
+  }
+
+  private async requestAndConnect(bluetooth: BluetoothLike, automatic: boolean): Promise<void> {
+    this.update({
+      phase: "scanning",
+      error: automatic ? "Looking for the previously paired iPhone…" : null,
+    });
+    const device = await bluetooth.requestDevice({
+      filters: [{ services: [CODEX_MICRO_SERVICE_UUID] }],
+      optionalServices: [CODEX_MICRO_SERVICE_UUID],
+    });
+    await this.connectDevice(device);
   }
 
   disconnect(): void {
@@ -260,7 +279,6 @@ class CodexMicroRemote {
     if (
       this.reconnectTimer !== null ||
       !this.snapshot.autoReconnect ||
-      !this.device ||
       this.snapshot.phase === "connected" ||
       this.snapshot.phase === "connecting"
     ) {
@@ -275,6 +293,8 @@ class CodexMicroRemote {
           this.fail(error);
           this.scheduleReconnect();
         });
+      } else {
+        void this.restore();
       }
     }, delay);
   }
@@ -301,22 +321,30 @@ class CodexMicroRemote {
   }
 
   private enqueueWorkspaceState(): void {
-    if (!this.workspaceState || !this.output) return;
-    const reports = encodeReports(CODEX_MICRO_STATE_CHANNEL, this.workspaceState);
+    if (!this.workspaceState || !this.output || this.workspaceWriteScheduled) return;
+    this.workspaceWriteScheduled = true;
     this.writeQueue = this.writeQueue
       .then(async () => {
-        const output = this.output;
-        if (!output) return;
-        for (const report of reports) {
-          const value = report.slice().buffer;
-          if (output.writeValueWithoutResponse) {
-            await output.writeValueWithoutResponse(value);
-          } else if (output.writeValue) {
-            await output.writeValue(value);
+        while (this.workspaceState && this.output) {
+          const state = this.workspaceState;
+          const output = this.output;
+          const reports = encodeReports(CODEX_MICRO_STATE_CHANNEL, state);
+          for (const report of reports) {
+            const value = report.slice().buffer;
+            if (output.writeValueWithoutResponse) {
+              await output.writeValueWithoutResponse(value);
+            } else if (output.writeValue) {
+              await output.writeValue(value);
+            }
           }
+          if (this.workspaceState === state) return;
         }
       })
-      .catch((error) => this.fail(error));
+      .catch((error) => this.fail(error))
+      .finally(() => {
+        this.workspaceWriteScheduled = false;
+        if (this.workspaceState && this.output) this.enqueueWorkspaceState();
+      });
   }
 
   private isDuplicate(commandId: string): boolean {

@@ -4905,6 +4905,11 @@ function ChatViewContent(props: ChatViewProps) {
             type: "info",
           });
           break;
+        case "clear":
+          clearComposerDraftContent(composerDraftTarget);
+          composerRef.current?.resetCursorState({ cursor: 0, prompt: "" });
+          composerRef.current?.focusAtEnd();
+          break;
         case "send":
           void onSend();
           break;

@@ -27,6 +27,7 @@ export type CodexMicroChatCommand =
   | { readonly kind: "approve" }
   | { readonly kind: "decline" }
   | { readonly kind: "fork" }
+  | { readonly kind: "clear" }
   | { readonly kind: "send" }
   | { readonly kind: "modelPicker" }
   | { readonly kind: "effort"; readonly direction: -1 | 1 }
@@ -147,6 +148,7 @@ function runAction(
 ): void {
   switch (action) {
     case "fast":
+    case "clear":
     case "send":
       dispatchChatCommand({ kind: action });
       return;
@@ -195,6 +197,8 @@ export function CodexMicroController() {
     getCodexMicroPreferences,
   );
   const [pinsRevision, setPinsRevision] = useState(0);
+  const [nativeVoiceActive, setNativeVoiceActive] = useState(false);
+  const [nativeVoiceIssue, setNativeVoiceIssue] = useState<string | null>(null);
   const selected = useMemo(() => {
     const match = location.pathname.match(/^\/([^/]+)\/([^/]+)$/);
     if (!match) return null;
@@ -209,10 +213,12 @@ export function CodexMicroController() {
       }
     };
     restore();
+    const reconnectInterval = window.setInterval(restore, 10_000);
     window.addEventListener("focus", restore);
     window.addEventListener("pageshow", restore);
     document.addEventListener("visibilitychange", restore);
     return () => {
+      window.clearInterval(reconnectInterval);
       window.removeEventListener("focus", restore);
       window.removeEventListener("pageshow", restore);
       document.removeEventListener("visibilitychange", restore);
@@ -230,8 +236,14 @@ export function CodexMicroController() {
   useEffect(() => {
     if (!isElectron) return;
     let pins = readPins();
-    const targets = threads
+    const targets = [...threads]
       .filter((thread) => thread.archivedAt === null)
+      .sort((left, right) => {
+        const newestFirst = Date.parse(right.createdAt) - Date.parse(left.createdAt);
+        return Number.isNaN(newestFirst)
+          ? String(left.id).localeCompare(String(right.id))
+          : newestFirst || String(left.id).localeCompare(String(right.id));
+      })
       .map((thread) => ({
         id: encodeCodexMicroTarget(thread.environmentId, thread.id),
         kind: "t3" as const,
@@ -252,6 +264,19 @@ export function CodexMicroController() {
       ...targets,
       ...previousTargets.map((target) => ({ ...target, status: "idle" })),
     ];
+
+    const availableTargetIds = new Set(stableTargets.map((target) => target.id));
+    const compactPins = pins.filter(
+      (pin): pin is string => typeof pin === "string" && availableTargetIds.has(pin),
+    );
+    const reconciledPins = Array.from(
+      { length: SLOT_COUNT },
+      (_, index) => compactPins[index] ?? null,
+    );
+    if (pins.some((pin, index) => pin !== reconciledPins[index])) {
+      pins = reconciledPins;
+      writePins(pins);
+    }
 
     if (pins.every((pin) => pin === null) && targets.length > 0) {
       pins = Array.from({ length: SLOT_COUNT }, (_, index) => targets[index]?.id ?? null);
@@ -279,6 +304,7 @@ export function CodexMicroController() {
       targets: stableTargets.map(({ status: _, ...target }) => target),
       pins,
       ...(selected ? { selected } : {}),
+      nativeVoiceActive,
       slots,
       controls: {
         actionKeys: preferences.actionKeys.map((action, index) => {
@@ -294,8 +320,10 @@ export function CodexMicroController() {
         joystick: preferences.joystick,
       },
     };
-    codexMicroRemote.setWorkspaceState(state);
-  }, [pinsRevision, preferences, selected, threads]);
+    codexMicroRemote.setWorkspaceState(
+      nativeVoiceIssue ? { ...state, issue: nativeVoiceIssue } : state,
+    );
+  }, [nativeVoiceActive, nativeVoiceIssue, pinsRevision, preferences, selected, threads]);
 
   useEffect(() => {
     if (!isElectron) return;
@@ -335,6 +363,29 @@ export function CodexMicroController() {
           kind: "insert",
           text: command.text,
           submit: command.submit === true,
+        });
+        return;
+      }
+
+      if (command.cmd === "vscodeVoice") {
+        const requestedActive = command.active === true;
+        const setMacDictation = window.desktopBridge?.setMacDictation;
+        if (!setMacDictation) {
+          setNativeVoiceActive(false);
+          setNativeVoiceIssue("macOS Dictation is unavailable in this T3 Code build.");
+          return;
+        }
+        void setMacDictation(requestedActive).then((result) => {
+          setNativeVoiceActive(result.active);
+          setNativeVoiceIssue(result.error);
+          if (
+            !requestedActive &&
+            command.autoSend === true &&
+            result.error === null &&
+            result.active === false
+          ) {
+            window.setTimeout(() => dispatchChatCommand({ kind: "send" }), 700);
+          }
         });
         return;
       }
@@ -416,6 +467,9 @@ export function CodexMicroController() {
             break;
           case "fork":
             dispatchChatCommand({ kind: "fork" });
+            break;
+          case "clear":
+            dispatchChatCommand({ kind: "clear" });
             break;
           case "frontendMax":
             dispatchChatCommand({ kind: "insert", text: "$frontend-max ", submit: false });

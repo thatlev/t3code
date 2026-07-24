@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - macOS Dictation requires an OS automation boundary.
 for (const stream of [process.stdout, process.stderr]) {
   stream.on("error", (err: NodeJS.ErrnoException) => {
     if (err.code !== "EPIPE") throw err;
@@ -8,6 +9,7 @@ import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
+import { execFile } from "node:child_process";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -60,6 +62,69 @@ import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
 
 const CODEX_MICRO_COMMAND_CHANNEL = "desktop:codex-micro-command";
+const SET_MAC_DICTATION_CHANNEL = "desktop:set-mac-dictation";
+
+let macDictationActive = false;
+let macDictationQueue = Promise.resolve({
+  active: false,
+  error: null as string | null,
+});
+
+function appleScriptString(value: string): string {
+  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+}
+
+function runAppleScript(source: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    execFile("/usr/bin/osascript", ["-e", source], (error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+}
+
+Electron.ipcMain.removeHandler(SET_MAC_DICTATION_CHANNEL);
+Electron.ipcMain.handle(SET_MAC_DICTATION_CHANNEL, (_event, requested: unknown) => {
+  const active = requested === true;
+  macDictationQueue = macDictationQueue.then(async () => {
+    if (process.platform !== "darwin") {
+      return { active: false, error: "macOS Dictation is only available on macOS." };
+    }
+    if (active === macDictationActive) return { active, error: null };
+
+    const windows = Electron.BrowserWindow.getAllWindows();
+    for (const window of windows) {
+      window.show();
+      window.focus();
+    }
+    Electron.app.focus({ steal: true });
+
+    const appName = Electron.app.name;
+    const script = `
+tell application "System Events"
+  tell process ${appleScriptString(appName)}
+    set frontmost to true
+    tell menu "Edit" of menu bar item "Edit" of menu bar 1
+      set dictationItems to every menu item whose name contains "Dictation"
+      if (count of dictationItems) is 0 then error "T3 Code has no Dictation menu item"
+      click item 1 of dictationItems
+    end tell
+  end tell
+end tell`;
+    try {
+      await runAppleScript(script);
+      macDictationActive = active;
+      return { active, error: null };
+    } catch {
+      return {
+        active: macDictationActive,
+        error:
+          "Could not toggle macOS Dictation. Enable Dictation and allow T3 Code to control System Events in macOS Privacy & Security.",
+      };
+    }
+  });
+  return macDictationQueue;
+});
 
 function parseCodexMicroUrl(value: string) {
   try {
@@ -93,6 +158,7 @@ function parseCodexMicroUrl(value: string) {
         action === "fast" ||
         action === "new" ||
         action === "fork" ||
+        action === "clear" ||
         action === "send" ||
         action === "frontendMax" ||
         action === "browser" ||

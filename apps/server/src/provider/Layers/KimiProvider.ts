@@ -18,6 +18,7 @@ import { HttpClient } from "effect/unstable/http";
 
 import { makeKimiAcpRuntime } from "../acp/KimiAcpSupport.ts";
 import {
+  buildSelectOptionDescriptor,
   buildServerProvider,
   isCommandMissingCause,
   parseGenericCliVersion,
@@ -69,6 +70,88 @@ function modelsFromAcp(
     ];
   });
 }
+
+type KimiProviderCatalog = {
+  readonly defaultModel?: unknown;
+  readonly models?: unknown;
+};
+
+export function modelsFromKimiProviderCatalog(raw: string): ReadonlyArray<ServerProviderModel> {
+  let catalog: KimiProviderCatalog;
+  try {
+    catalog = JSON.parse(raw) as KimiProviderCatalog;
+  } catch {
+    return [];
+  }
+  if (!catalog.models || typeof catalog.models !== "object" || Array.isArray(catalog.models)) {
+    return [];
+  }
+
+  const defaultModel =
+    typeof catalog.defaultModel === "string" ? catalog.defaultModel.trim() : undefined;
+  return Object.entries(catalog.models as Record<string, unknown>).flatMap(
+    ([rawSlug, rawModel]) => {
+      const slug = rawSlug.trim();
+      if (!slug || !rawModel || typeof rawModel !== "object" || Array.isArray(rawModel)) return [];
+      const model = rawModel as Record<string, unknown>;
+      const name =
+        typeof model.displayName === "string" && model.displayName.trim()
+          ? model.displayName.trim()
+          : slug;
+      const efforts = Array.isArray(model.supportEfforts)
+        ? model.supportEfforts.filter(
+            (effort): effort is string => typeof effort === "string" && effort.trim().length > 0,
+          )
+        : [];
+      const defaultEffort =
+        typeof model.defaultEffort === "string" ? model.defaultEffort.trim() : undefined;
+      const capabilities =
+        efforts.length > 0
+          ? createModelCapabilities({
+              optionDescriptors: [
+                buildSelectOptionDescriptor({
+                  id: "reasoning",
+                  label: "Reasoning effort",
+                  options: efforts.map((effort) => ({
+                    value: effort,
+                    label: effort.charAt(0).toUpperCase() + effort.slice(1),
+                    ...(effort === defaultEffort ? { isDefault: true } : {}),
+                  })),
+                }),
+              ],
+            })
+          : EMPTY_CAPABILITIES;
+      return [
+        {
+          slug,
+          name,
+          isCustom: false,
+          ...(slug === defaultModel ? { isDefault: true } : {}),
+          capabilities,
+        } satisfies ServerProviderModel,
+      ];
+    },
+  );
+}
+
+const discoverModelsFromProviderCatalog = (
+  settings: KimiSettings,
+  environment: NodeJS.ProcessEnv,
+) =>
+  Effect.gen(function* () {
+    const command = settings.binaryPath || "kimi";
+    const spawnCommand = yield* resolveSpawnCommand(command, ["provider", "list", "--json"], {
+      env: environment,
+    });
+    const result = yield* spawnAndCollect(
+      command,
+      ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+        env: environment,
+        shell: spawnCommand.shell,
+      }),
+    );
+    return result.code === 0 ? modelsFromKimiProviderCatalog(result.stdout) : [];
+  });
 
 export function buildInitialKimiProviderSnapshot(
   settings: KimiSettings,
@@ -190,10 +273,17 @@ export const checkKimiProviderStatus = Effect.fn("checkKimiProviderStatus")(func
 
   const versionOutput = versionResult.success.value;
   const version = parseGenericCliVersion(`${versionOutput.stdout}\n${versionOutput.stderr}`);
-  const probe = yield* discoverModels(settings, environment).pipe(
+  const catalogProbe = yield* discoverModelsFromProviderCatalog(settings, environment).pipe(
     Effect.timeoutOption(ACP_PROBE_TIMEOUT_MS),
     Effect.result,
   );
+  const catalogModels =
+    Result.isSuccess(catalogProbe) && Option.isSome(catalogProbe.success)
+      ? catalogProbe.success.value
+      : [];
+  const probe = yield* (
+    catalogModels.length > 0 ? Effect.succeed(catalogModels) : discoverModels(settings, environment)
+  ).pipe(Effect.timeoutOption(ACP_PROBE_TIMEOUT_MS), Effect.result);
   if (Result.isFailure(probe) || Option.isNone(probe.success)) {
     return buildServerProvider({
       presentation: KIMI_PRESENTATION,
