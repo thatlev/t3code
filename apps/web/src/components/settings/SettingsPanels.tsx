@@ -43,7 +43,12 @@ import { TraitsPicker } from "../chat/TraitsPicker";
 import { isElectron } from "../../env";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
 import { useTheme } from "../../hooks/useTheme";
-import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
+import {
+  useClientSettings,
+  usePrimarySettings,
+  useUpdateClientSettings,
+  useUpdatePrimarySettings,
+} from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
@@ -98,6 +103,7 @@ import {
 } from "./settingsLayout";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { isArchivedProject, removeArchivedProjectKey } from "../../projectArchive";
 
 const THEME_OPTIONS = [
   {
@@ -1543,6 +1549,16 @@ export function ProviderSettingsPanel() {
 
 export function ArchivedThreadsPanel() {
   const projects = useProjects();
+  const archivedProjectKeys = useClientSettings((settings) => settings.archivedProjectKeys);
+  const updateClientSettings = useUpdateClientSettings();
+  const archivedProjectKeySet = useMemo(() => new Set(archivedProjectKeys), [archivedProjectKeys]);
+  const hiddenProjects = useMemo(
+    () =>
+      projects
+        .filter((project) => isArchivedProject(archivedProjectKeySet, project))
+        .toSorted((left, right) => left.title.localeCompare(right.title)),
+    [archivedProjectKeySet, projects],
+  );
   const { unarchiveThread, confirmAndDeleteThread } = useThreadActions();
   const environmentIds = useMemo(
     () => [...new Set(projects.map((project) => project.environmentId))],
@@ -1579,12 +1595,12 @@ export function ArchivedThreadsPanel() {
       })),
     );
 
-    const archivedProjects = Array.from(projectsByEnvironmentAndId.values());
+    const snapshotProjects = Array.from(projectsByEnvironmentAndId.values());
     const groups: Array<{
-      readonly project: (typeof archivedProjects)[number];
+      readonly project: (typeof snapshotProjects)[number];
       readonly threads: Array<(typeof threads)[number]>;
     }> = [];
-    for (const project of archivedProjects) {
+    for (const project of snapshotProjects) {
       const projectThreads: Array<(typeof threads)[number]> = [];
       for (const thread of threads) {
         if (thread.projectId === project.id && thread.environmentId === project.environmentId) {
@@ -1655,6 +1671,38 @@ export function ArchivedThreadsPanel() {
 
   return (
     <SettingsPageContainer>
+      {hiddenProjects.length > 0 ? (
+        <SettingsSection title="Archived projects">
+          {hiddenProjects.map((project) => (
+            <SettingsRow
+              key={`${project.environmentId}:${project.id}`}
+              title={project.title}
+              description={`Hidden from the sidebar · ${project.workspaceRoot}`}
+              control={
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 shrink-0 cursor-pointer gap-1.5 px-2.5"
+                  onClick={() => {
+                    updateClientSettings({
+                      archivedProjectKeys: removeArchivedProjectKey(archivedProjectKeys, project),
+                    });
+                    toastManager.add({
+                      type: "success",
+                      title: "Project restored",
+                      description: `${project.title} is visible in the sidebar again.`,
+                    });
+                  }}
+                >
+                  <ArchiveX aria-hidden className="size-3.5" />
+                  <span>Restore</span>
+                </Button>
+              }
+            />
+          ))}
+        </SettingsSection>
+      ) : null}
       {archivedGroups.length === 0 ? (
         <SettingsSection title="Archived threads">
           <SettingsRow

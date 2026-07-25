@@ -1,3 +1,8 @@
+import type {
+  DesktopCodexMicroTransportEvent,
+  DesktopCodexMicroTransportState,
+} from "@t3tools/contracts";
+
 import {
   CODEX_MICRO_INPUT_UUID,
   CODEX_MICRO_OUTPUT_UUID,
@@ -106,6 +111,8 @@ const INITIAL_SNAPSHOT: CodexMicroRemoteSnapshot = {
   charging: false,
 };
 
+const WORKSPACE_WRITE_INTERVAL_MS = 100;
+
 class CodexMicroRemote {
   private snapshot = INITIAL_SNAPSHOT;
   private readonly listeners = new Set<() => void>();
@@ -114,12 +121,19 @@ class CodexMicroRemote {
   private readonly recentCommandIds = new Map<string, number>();
   private device: BluetoothDeviceLike | null = null;
   private output: BluetoothCharacteristicLike | null = null;
+  private writeReport: ((report: Uint8Array) => Promise<void>) | null = null;
   private workspaceState: CodexMicroWorkspaceState | null = null;
   private reconnectTimer: number | null = null;
   private livenessTimer: number | null = null;
   private reconnectAttempt = 0;
   private writeQueue = Promise.resolve();
   private workspaceWriteScheduled = false;
+  private workspaceWriteDirty = false;
+  private workspaceFlushTimer: number | null = null;
+  private lastWorkspaceWriteAt = 0;
+  private restorePromise: Promise<void> | null = null;
+  private desktopTransportUnsubscribe: (() => void) | null = null;
+  private desktopTransportRevision = -1;
 
   getSnapshot = (): CodexMicroRemoteSnapshot => this.snapshot;
   getWorkspaceState = (): CodexMicroWorkspaceState | null => this.workspaceState;
@@ -135,6 +149,33 @@ class CodexMicroRemote {
   }
 
   async restore(): Promise<void> {
+    if (this.restorePromise !== null) return this.restorePromise;
+    const pending = this.restoreInternal();
+    this.restorePromise = pending;
+    try {
+      await pending;
+    } finally {
+      if (this.restorePromise === pending) this.restorePromise = null;
+    }
+  }
+
+  private async restoreInternal(): Promise<void> {
+    const desktopTransport = this.desktopTransport();
+    if (desktopTransport !== null) {
+      if (this.desktopTransportUnsubscribe === null) {
+        this.desktopTransportUnsubscribe = desktopTransport.onCodexMicroTransportEvent(
+          this.handleDesktopTransportEvent,
+        );
+      }
+      try {
+        this.applyDesktopTransportState(await desktopTransport.getCodexMicroTransportState());
+      } catch (error) {
+        this.fail(error);
+        this.scheduleReconnect();
+      }
+      return;
+    }
+
     const bluetooth = this.bluetooth();
     if (
       !bluetooth ||
@@ -165,6 +206,10 @@ class CodexMicroRemote {
   }
 
   async pair(): Promise<void> {
+    if (this.desktopTransport() !== null) {
+      await this.restore();
+      return;
+    }
     const bluetooth = this.bluetooth();
     if (!bluetooth) {
       this.update({ phase: "unsupported", error: "Bluetooth is unavailable in this build." });
@@ -198,29 +243,109 @@ class CodexMicroRemote {
   disconnect(): void {
     this.clearReconnect();
     this.clearLiveness();
-    this.snapshot = { ...this.snapshot, autoReconnect: false };
+    this.snapshot = { ...this.snapshot, autoReconnect: true };
+    if (this.desktopTransport() !== null) {
+      // The native menu companion owns the shared Bluetooth link and recovers
+      // it automatically. A renderer must never tear that link down.
+      void this.restore();
+      return;
+    }
     this.device?.gatt?.disconnect();
     this.device = null;
     this.output = null;
+    this.writeReport = null;
     this.decoder.reset();
     this.update({ phase: "disconnected", deviceName: null, error: null });
+    this.scheduleReconnect();
   }
 
   setWorkspaceState(state: CodexMicroWorkspaceState): void {
     this.workspaceState = state;
     for (const listener of this.listeners) listener();
     if (this.snapshot.phase === "connected") {
-      this.enqueueWorkspaceState();
+      this.scheduleWorkspaceState();
     }
   }
 
   replayWorkspaceState(): void {
+    this.clearWorkspaceFlush();
     this.enqueueWorkspaceState();
   }
 
   private bluetooth(): BluetoothLike | null {
     if (typeof navigator === "undefined") return null;
     return (navigator as Navigator & { bluetooth?: BluetoothLike }).bluetooth ?? null;
+  }
+
+  private desktopTransport(): {
+    getCodexMicroTransportState: () => Promise<DesktopCodexMicroTransportState>;
+    sendCodexMicroTransportReport: (report: readonly number[]) => void;
+    onCodexMicroTransportEvent: (
+      listener: (event: DesktopCodexMicroTransportEvent) => void,
+    ) => () => void;
+  } | null {
+    if (typeof window === "undefined") return null;
+    const bridge = window.desktopBridge;
+    if (
+      bridge?.getCodexMicroTransportState === undefined ||
+      bridge.sendCodexMicroTransportReport === undefined ||
+      bridge.onCodexMicroTransportEvent === undefined
+    ) {
+      return null;
+    }
+    return {
+      getCodexMicroTransportState: bridge.getCodexMicroTransportState,
+      sendCodexMicroTransportReport: bridge.sendCodexMicroTransportReport,
+      onCodexMicroTransportEvent: bridge.onCodexMicroTransportEvent,
+    };
+  }
+
+  private readonly handleDesktopTransportEvent = (event: DesktopCodexMicroTransportEvent): void => {
+    if (event.kind === "state") {
+      this.applyDesktopTransportState(event.state);
+      return;
+    }
+    if (this.snapshot.phase !== "connected") return;
+    const report = Uint8Array.from(event.report);
+    const body = report.byteLength === 64 && report[0] === 6 ? report.subarray(1) : report;
+    this.ingestReport(body);
+  };
+
+  private applyDesktopTransportState(state: DesktopCodexMicroTransportState): void {
+    if (state.revision <= this.desktopTransportRevision) return;
+    this.desktopTransportRevision = state.revision;
+    this.clearReconnect();
+    this.clearLiveness();
+    this.device = null;
+    this.output = null;
+    this.snapshot = { ...this.snapshot, autoReconnect: true };
+
+    const transport = this.desktopTransport();
+    if (state.companionConnected && state.phoneConnected && transport !== null) {
+      this.writeReport = async (report) => {
+        transport.sendCodexMicroTransportReport([...report]);
+      };
+      this.reconnectAttempt = 0;
+      this.update({
+        phase: "connected",
+        deviceName: "Codex Micro",
+        error: null,
+      });
+      this.enqueueWorkspaceState();
+      return;
+    }
+
+    this.writeReport = null;
+    this.decoder.reset();
+    this.update({
+      phase: "scanning",
+      deviceName: state.companionConnected ? "Codex Micro" : null,
+      error:
+        state.error ??
+        (state.companionConnected
+          ? "Codex Micro is ready. Open the iPhone app to connect automatically."
+          : "Opening the Codex Micro menu companion…"),
+    });
   }
 
   private async connectDevice(device: BluetoothDeviceLike): Promise<void> {
@@ -236,6 +361,16 @@ class CodexMicroRemote {
     const service = await server.getPrimaryService(CODEX_MICRO_SERVICE_UUID);
     const input = await service.getCharacteristic(CODEX_MICRO_INPUT_UUID);
     this.output = await service.getCharacteristic(CODEX_MICRO_OUTPUT_UUID);
+    this.writeReport = async (report) => {
+      const output = this.output;
+      if (!output) throw new Error("The Codex Micro output channel is unavailable.");
+      const value = report.slice().buffer;
+      if (output.writeValueWithoutResponse) {
+        await output.writeValueWithoutResponse(value);
+      } else if (output.writeValue) {
+        await output.writeValue(value);
+      }
+    };
     input.addEventListener("characteristicvaluechanged", this.handleNotification);
     await input.startNotifications();
     device.addEventListener("gattserverdisconnected", this.handleDisconnected);
@@ -249,7 +384,11 @@ class CodexMicroRemote {
     const characteristic = event.currentTarget as BluetoothCharacteristicLike | null;
     if (!characteristic?.value) return;
     this.notePhoneActivity();
-    for (const command of this.decoder.push(characteristic.value)) {
+    this.ingestReport(characteristic.value);
+  };
+
+  private ingestReport(report: DataView | Uint8Array): void {
+    for (const command of this.decoder.push(report)) {
       if (command.surface && command.surface !== "t3code") continue;
       if (command.commandID && this.isDuplicate(command.commandID)) continue;
       if (command.cmd === "deviceStatus") {
@@ -265,11 +404,12 @@ class CodexMicroRemote {
       }
       for (const listener of this.commandListeners) listener(command);
     }
-  };
+  }
 
   private readonly handleDisconnected = (): void => {
     this.clearLiveness();
     this.output = null;
+    this.writeReport = null;
     this.decoder.reset();
     this.update({ phase: "disconnected", error: null });
     this.scheduleReconnect();
@@ -321,30 +461,61 @@ class CodexMicroRemote {
   }
 
   private enqueueWorkspaceState(): void {
-    if (!this.workspaceState || !this.output || this.workspaceWriteScheduled) return;
+    this.clearWorkspaceFlush();
+    if (!this.workspaceState || !this.writeReport) return;
+    if (this.workspaceWriteScheduled) {
+      this.workspaceWriteDirty = true;
+      return;
+    }
+    const state = this.workspaceState;
+    const writeReport = this.writeReport;
+    this.workspaceWriteDirty = false;
     this.workspaceWriteScheduled = true;
     this.writeQueue = this.writeQueue
       .then(async () => {
-        while (this.workspaceState && this.output) {
-          const state = this.workspaceState;
-          const output = this.output;
-          const reports = encodeReports(CODEX_MICRO_STATE_CHANNEL, state);
-          for (const report of reports) {
-            const value = report.slice().buffer;
-            if (output.writeValueWithoutResponse) {
-              await output.writeValueWithoutResponse(value);
-            } else if (output.writeValue) {
-              await output.writeValue(value);
-            }
-          }
-          if (this.workspaceState === state) return;
+        const reports = encodeReports(CODEX_MICRO_STATE_CHANNEL, state);
+        for (const report of reports) {
+          await writeReport(report);
         }
+        this.lastWorkspaceWriteAt = Date.now();
       })
       .catch((error) => this.fail(error))
       .finally(() => {
         this.workspaceWriteScheduled = false;
-        if (this.workspaceState && this.output) this.enqueueWorkspaceState();
+        if (
+          this.workspaceWriteDirty ||
+          this.workspaceState !== state ||
+          this.writeReport !== writeReport
+        ) {
+          this.scheduleWorkspaceState();
+        }
       });
+  }
+
+  private scheduleWorkspaceState(): void {
+    if (!this.workspaceState || !this.writeReport) return;
+    if (this.workspaceWriteScheduled) {
+      this.workspaceWriteDirty = true;
+      return;
+    }
+    if (this.workspaceFlushTimer !== null) return;
+    const elapsed = Date.now() - this.lastWorkspaceWriteAt;
+    const delay = Math.max(0, WORKSPACE_WRITE_INTERVAL_MS - elapsed);
+    if (delay === 0) {
+      this.enqueueWorkspaceState();
+      return;
+    }
+    this.workspaceFlushTimer = window.setTimeout(() => {
+      this.workspaceFlushTimer = null;
+      this.enqueueWorkspaceState();
+    }, delay);
+  }
+
+  private clearWorkspaceFlush(): void {
+    if (this.workspaceFlushTimer !== null) {
+      window.clearTimeout(this.workspaceFlushTimer);
+      this.workspaceFlushTimer = null;
+    }
   }
 
   private isDuplicate(commandId: string): boolean {

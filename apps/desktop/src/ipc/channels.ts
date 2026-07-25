@@ -6,6 +6,10 @@ export const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
 export const SET_MAC_DICTATION_CHANNEL = "desktop:set-mac-dictation";
 export const MENU_ACTION_CHANNEL = "desktop:menu-action";
 export const CODEX_MICRO_COMMAND_CHANNEL = "desktop:codex-micro-command";
+export const CODEX_MICRO_TRANSPORT_GET_STATE_CHANNEL = "desktop:codex-micro-transport-get-state";
+export const CODEX_MICRO_TRANSPORT_SEND_REPORT_CHANNEL =
+  "desktop:codex-micro-transport-send-report";
+export const CODEX_MICRO_TRANSPORT_EVENT_CHANNEL = "desktop:codex-micro-transport-event";
 export const GET_WINDOW_FULLSCREEN_STATE_CHANNEL = "desktop:get-window-fullscreen-state";
 export const WINDOW_FULLSCREEN_STATE_CHANNEL = "desktop:window-fullscreen-state";
 export const UPDATE_STATE_CHANNEL = "desktop:update-state";

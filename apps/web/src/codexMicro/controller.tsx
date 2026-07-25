@@ -77,6 +77,25 @@ export function useCodexMicroIsPinned(environmentId: string, threadId: string): 
   }
 }
 
+export function useCodexMicroPinnedTargets(): readonly string[] {
+  const serialized = useSyncExternalStore(
+    subscribePins,
+    () => localStorage.getItem(PINS_STORAGE_KEY) ?? "[]",
+    () => "[]",
+  );
+  return useMemo(() => {
+    try {
+      const pins: unknown = JSON.parse(serialized);
+      if (!Array.isArray(pins)) return [];
+      return pins
+        .filter((pin): pin is string => typeof pin === "string" && pin.length > 0)
+        .slice(0, SLOT_COUNT);
+    } catch {
+      return [];
+    }
+  }, [serialized]);
+}
+
 export function resetCodexMicroPins(): void {
   localStorage.removeItem(PINS_STORAGE_KEY);
   window.dispatchEvent(new Event("t3-codex-micro-pins-changed"));

@@ -31,7 +31,6 @@ import {
 } from "../../codexMicro/preferences";
 import { codexMicroRemote } from "../../codexMicro/remote";
 import { isElectron } from "../../env";
-import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
 import { SettingsPageContainer } from "./settingsLayout";
 
@@ -466,32 +465,9 @@ export function CodexMicroSettings() {
             compact
             title="Connection"
             control={
-              <>
-                <span className={snapshot.phase === "error" ? "text-destructive" : ""}>
-                  {connectionLabel}
-                </span>
-                {isElectron ? (
-                  connected ? (
-                    <Button
-                      size="xs"
-                      variant="secondary"
-                      onClick={() => codexMicroRemote.disconnect()}
-                    >
-                      Disconnect
-                    </Button>
-                  ) : (
-                    <Button
-                      size="xs"
-                      variant="secondary"
-                      disabled={busy}
-                      onClick={() => void codexMicroRemote.pair()}
-                    >
-                      <BluetoothIcon className="size-3.5" />
-                      Connect iPhone
-                    </Button>
-                  )
-                ) : null}
-              </>
+              <span className={snapshot.phase === "error" ? "text-destructive" : ""}>
+                {connectionLabel}
+              </span>
             }
           />
           <SettingLine
@@ -514,8 +490,8 @@ export function CodexMicroSettings() {
             }
           />
           <SettingLine
-            title="Bluetooth access"
-            description="Required for direct Codex Micro control from the iPhone"
+            title="Automatic connection"
+            description="T3 Code uses the Codex Micro menu companion and reconnects after launch, sleep, and reloads"
             control={
               <span className="inline-flex items-center gap-2">
                 {snapshot.phase === "unsupported" ? (
@@ -525,7 +501,7 @@ export function CodexMicroSettings() {
                   </>
                 ) : (
                   <>
-                    <span>{isElectron ? "Ready" : "Desktop app required"}</span>
+                    <span>{isElectron ? (busy ? "Starting" : "On") : "Desktop app required"}</span>
                     <BluetoothIcon className="size-3.5" />
                   </>
                 )}

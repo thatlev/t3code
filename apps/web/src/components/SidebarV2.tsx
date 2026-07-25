@@ -16,6 +16,7 @@ import type { ScopedThreadRef, SidebarProjectGroupingMode } from "@t3tools/contr
 import {
   AlarmClockIcon,
   AlarmClockOffIcon,
+  ArchiveIcon,
   CheckIcon,
   ChevronDownIcon,
   CircleAlertIcon,
@@ -55,7 +56,11 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { isElectron } from "../env";
-import { useCodexMicroIsPinned } from "../codexMicro/controller";
+import {
+  encodeCodexMicroTarget,
+  useCodexMicroIsPinned,
+  useCodexMicroPinnedTargets,
+} from "../codexMicro/controller";
 import {
   resolveShortcutCommand,
   shortcutLabelForCommand,
@@ -155,6 +160,7 @@ import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrom
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { useComposerDraftStore } from "../composerDraftStore";
+import { addArchivedProjectKeys, isArchivedProject, projectArchiveKey } from "../projectArchive";
 
 // Settled-tail paging: recent history is the common lookup; the deep tail
 // stays behind an explicit Show more.
@@ -1007,6 +1013,13 @@ export default function SidebarV2() {
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
+  const codexMicroPinnedTargets = useCodexMicroPinnedTargets();
+  const archivedProjectKeys = useClientSettings((settings) => settings.archivedProjectKeys);
+  const archivedProjectKeySet = useMemo(() => new Set(archivedProjectKeys), [archivedProjectKeys]);
+  const visibleProjects = useMemo(
+    () => projects.filter((project) => !isArchivedProject(archivedProjectKeySet, project)),
+    [archivedProjectKeySet, projects],
+  );
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -1014,12 +1027,15 @@ export default function SidebarV2() {
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
-  const { settleThread, unsettleThread, snoozeThread, unsnoozeThread, deleteThread } =
-    useThreadActions();
+  const {
+    archiveThread,
+    settleThread,
+    unsettleThread,
+    snoozeThread,
+    unsnoozeThread,
+    deleteThread,
+  } = useThreadActions();
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
-    reportFailure: false,
-  });
-  const deleteProject = useAtomCommand(projectEnvironment.delete, {
     reportFailure: false,
   });
   const updateProject = useAtomCommand(projectEnvironment.update, {
@@ -1084,7 +1100,7 @@ export default function SidebarV2() {
   const orderedProjects = useMemo(
     () =>
       orderItemsByPreferredIds({
-        items: projects,
+        items: visibleProjects,
         preferredIds: projectOrder,
         getId: getProjectOrderKey,
         getPreferenceIds: (project) => [
@@ -1092,12 +1108,12 @@ export default function SidebarV2() {
           legacyProjectCwdPreferenceKey(project.workspaceRoot),
         ],
       }),
-    [projectOrder, projects],
+    [projectOrder, visibleProjects],
   );
   const unsortedProjectGroups = useMemo(
     () =>
       buildSidebarProjectSnapshots({
-        projects: sidebarProjectSortOrder === "manual" ? orderedProjects : projects,
+        projects: sidebarProjectSortOrder === "manual" ? orderedProjects : visibleProjects,
         settings: projectGroupingSettings,
         primaryEnvironmentId,
         resolveEnvironmentLabel: (environmentId) => environmentLabelById.get(environmentId) ?? null,
@@ -1107,13 +1123,17 @@ export default function SidebarV2() {
       orderedProjects,
       primaryEnvironmentId,
       projectGroupingSettings,
-      projects,
+      visibleProjects,
       sidebarProjectSortOrder,
     ],
   );
   const projectGroups = useMemo(
     () => sortLogicalProjectsForSidebar(unsortedProjectGroups, threads, sidebarProjectSortOrder),
     [sidebarProjectSortOrder, threads, unsortedProjectGroups],
+  );
+  const visibleProjectKeys = useMemo(
+    () => new Set(visibleProjects.map((project) => projectArchiveKey(project))),
+    [visibleProjects],
   );
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const providerEntryByInstanceId = useMemo(
@@ -1210,14 +1230,45 @@ export default function SidebarV2() {
     clearSelection();
   }, [clearSelection, projectScopeKey]);
 
+  const archiveProjectMembers = useCallback(
+    (members: readonly SidebarProjectGroupMember[]) => {
+      const draftStore = useComposerDraftStore.getState();
+      let shouldNavigate = false;
+      for (const member of members) {
+        const memberThreads = threads.filter(
+          (thread) =>
+            thread.environmentId === member.environmentId && thread.projectId === member.id,
+        );
+        const projectRef = scopeProjectRef(member.environmentId, member.id);
+        shouldNavigate ||= shouldNavigateAfterProjectRemoval({
+          routeTarget: routeTargetRef.current,
+          projectThreads: memberThreads,
+          projectDraftId: draftStore.getDraftThreadByProjectRef(projectRef)?.draftId ?? null,
+        });
+      }
+      updateSettings({
+        archivedProjectKeys: addArchivedProjectKeys(archivedProjectKeys, members),
+      });
+      toastManager.add({
+        type: "success",
+        title: members.length === 1 ? "Project archived" : "Projects archived",
+        description: "Restore from Settings → Archive.",
+      });
+      if (shouldNavigate) void router.navigate({ to: "/" });
+    },
+    [archivedProjectKeys, router, threads, updateSettings],
+  );
+
   const handleRemoveProjectMembers = useCallback(
     async (projectGroup: SidebarProjectSnapshot, members: readonly SidebarProjectGroupMember[]) => {
       const api = readLocalApi();
       if (!api) return;
 
       const memberKeys = new Set(members.map((member) => `${member.environmentId}:${member.id}`));
-      const projectThreads = threads.filter((thread) =>
-        memberKeys.has(`${thread.environmentId}:${thread.projectId}`),
+      const projectThreads = threads.filter(
+        (thread) =>
+          thread.archivedAt === null &&
+          memberKeys.has(`${thread.environmentId}:${thread.projectId}`),
       );
       const isWholeGroup = members.length === projectGroup.memberProjects.length;
       const singleMember = members.length === 1 ? members[0]! : null;
@@ -1226,7 +1277,7 @@ export default function SidebarV2() {
         api.dialogs.confirm(
           projectThreads.length > 0
             ? [
-                `Remove project "${targetLabel}" and delete its ${projectThreads.length} thread${projectThreads.length === 1 ? "" : "s"}?`,
+                `Remove project "${targetLabel}" and archive its ${projectThreads.length} thread${projectThreads.length === 1 ? "" : "s"}?`,
                 ...(singleMember
                   ? [
                       `Path: ${singleMember.workspaceRoot}`,
@@ -1235,11 +1286,10 @@ export default function SidebarV2() {
                         : []),
                     ]
                   : [`This removes ${members.length} grouped project entries.`]),
-                "This permanently clears conversation history for those threads.",
+                "The project and its conversations remain recoverable in Settings → Archive.",
                 isWholeGroup
                   ? "This removes only the project entries, not the files on disk."
                   : "Other entries in this grouped project are unaffected.",
-                "This action cannot be undone.",
               ].join("\n")
             : [
                 `Remove project "${targetLabel}"?`,
@@ -1254,62 +1304,31 @@ export default function SidebarV2() {
                 isWholeGroup
                   ? "This removes only the project entries, not the files on disk."
                   : "Other entries in this grouped project are unaffected.",
+                "The project remains recoverable in Settings → Archive.",
               ].join("\n"),
         ),
       );
       if (confirmed._tag === "Failure" || !confirmed.value) return;
 
-      const draftStore = useComposerDraftStore.getState();
-      let shouldNavigate = false;
-      for (const project of members) {
-        const memberThreads = projectThreads.filter(
-          (thread) =>
-            thread.environmentId === project.environmentId && thread.projectId === project.id,
-        );
-        const projectRef = scopeProjectRef(project.environmentId, project.id);
-        const projectDraftThread = draftStore.getDraftThreadByProjectRef(projectRef);
-        const memberRemovalNeedsNavigation = shouldNavigateAfterProjectRemoval({
-          routeTarget: routeTargetRef.current,
-          projectThreads: memberThreads,
-          projectDraftId: projectDraftThread?.draftId ?? null,
-        });
-
-        const result = await deleteProject({
-          environmentId: project.environmentId,
-          input: {
-            projectId: project.id,
-            ...(memberThreads.length > 0 ? { force: true } : {}),
-          },
-        });
+      for (const thread of projectThreads) {
+        const result = await archiveThread(scopeThreadRef(thread.environmentId, thread.id));
         if (result._tag === "Failure") {
           if (!isAtomCommandInterrupted(result)) {
             const error = squashAtomCommandFailure(result);
             toastManager.add(
               stackedThreadToast({
                 type: "error",
-                title: `Failed to remove "${project.title}"`,
+                title: `Failed to archive "${thread.title}"`,
                 description: error instanceof Error ? error.message : "An error occurred.",
               }),
             );
           }
-          if (shouldNavigate) {
-            void router.navigate({ to: "/" });
-          }
           return;
         }
-
-        shouldNavigate ||= memberRemovalNeedsNavigation;
-        if (projectDraftThread) {
-          draftStore.clearDraftThread(projectDraftThread.draftId);
-        }
-        draftStore.clearProjectDraftThreadId(projectRef);
       }
-
-      if (shouldNavigate) {
-        void router.navigate({ to: "/" });
-      }
+      archiveProjectMembers(members);
     },
-    [deleteProject, router, threads],
+    [archiveProjectMembers, archiveThread, threads],
   );
 
   const renameProjectMember = useCallback(
@@ -1367,68 +1386,89 @@ export default function SidebarV2() {
   // merging, no optimistic holds. Archived threads remain hidden here —
   // archive keeps its original "remove from sidebar" meaning.
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
-  const { activeThreads, snoozedThreads, settledThreads, snoozeNow } = useMemo(() => {
-    const now = `${nowMinute}:00.000Z`;
-    // Snooze classification uses a REAL clock, not the quantized minute:
-    // wake times are second-precise and a woken thread must not linger on
-    // the shelf for the rest of the minute. snoozeWakeTick re-runs this
-    // memo exactly at the next wake boundary.
-    void snoozeWakeTick;
-    const preciseNow = new Date().toISOString();
-    const visible = threads.filter(
-      (thread) =>
-        thread.archivedAt === null &&
-        (scopedProjectKeys === null ||
-          scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
-    );
-    const active: EnvironmentThreadShell[] = [];
-    const snoozed: EnvironmentThreadShell[] = [];
-    const settled: EnvironmentThreadShell[] = [];
-    for (const thread of visible) {
-      // Threads on servers without the settlement capability (old server,
-      // or descriptor not loaded yet) never classify as settled: the user
-      // could neither un-settle nor pin them, so auto-settling them would
-      // strand rows in a tail with no working affordances.
-      const supportsSettlement =
-        serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSettlement === true;
-      const supportsSnooze =
-        serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true;
-      const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-      const changeRequestState = changeRequestStateByKey.get(threadKey) ?? null;
-      // Snooze outranks settled classification: an explicitly snoozed thread
-      // belongs to the shelf even if it would also auto-settle (the shelf's
-      // wake time is a stronger statement about when it matters again).
-      if (supportsSnooze && effectiveSnoozed(thread, { now: preciseNow })) {
-        snoozed.push(thread);
-      } else if (
-        supportsSettlement &&
-        effectiveSettled(thread, { now, autoSettleAfterDays, changeRequestState })
-      ) {
-        settled.push(thread);
-      } else {
-        active.push(thread);
+  const { pinnedThreads, activeThreads, snoozedThreads, settledThreads, snoozeNow } =
+    useMemo(() => {
+      const now = `${nowMinute}:00.000Z`;
+      // Snooze classification uses a REAL clock, not the quantized minute:
+      // wake times are second-precise and a woken thread must not linger on
+      // the shelf for the rest of the minute. snoozeWakeTick re-runs this
+      // memo exactly at the next wake boundary.
+      void snoozeWakeTick;
+      const preciseNow = new Date().toISOString();
+      const visible = threads.filter(
+        (thread) =>
+          thread.archivedAt === null &&
+          visibleProjectKeys.has(
+            projectArchiveKey({
+              environmentId: thread.environmentId,
+              id: thread.projectId,
+            }),
+          ) &&
+          (scopedProjectKeys === null ||
+            scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
+      );
+      const active: EnvironmentThreadShell[] = [];
+      const pinned: EnvironmentThreadShell[] = [];
+      const snoozed: EnvironmentThreadShell[] = [];
+      const settled: EnvironmentThreadShell[] = [];
+      const pinnedTargetSet = new Set(codexMicroPinnedTargets);
+      for (const thread of visible) {
+        if (pinnedTargetSet.has(encodeCodexMicroTarget(thread.environmentId, thread.id))) {
+          pinned.push(thread);
+          continue;
+        }
+        // Threads on servers without the settlement capability (old server,
+        // or descriptor not loaded yet) never classify as settled: the user
+        // could neither un-settle nor pin them, so auto-settling them would
+        // strand rows in a tail with no working affordances.
+        const supportsSettlement =
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSettlement ===
+          true;
+        const supportsSnooze =
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true;
+        const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+        const changeRequestState = changeRequestStateByKey.get(threadKey) ?? null;
+        // Snooze outranks settled classification: an explicitly snoozed thread
+        // belongs to the shelf even if it would also auto-settle (the shelf's
+        // wake time is a stronger statement about when it matters again).
+        if (supportsSnooze && effectiveSnoozed(thread, { now: preciseNow })) {
+          snoozed.push(thread);
+        } else if (
+          supportsSettlement &&
+          effectiveSettled(thread, { now, autoSettleAfterDays, changeRequestState })
+        ) {
+          settled.push(thread);
+        } else {
+          active.push(thread);
+        }
       }
-    }
-    return {
-      activeThreads: sortThreadsForSidebarV2(active),
-      // Soonest wake first: "what comes back next" is the shelf's question.
-      snoozedThreads: snoozed.toSorted(
-        (left, right) =>
-          firstValidTimestampMs(left.snoozedUntil ?? null) -
-          firstValidTimestampMs(right.snoozedUntil ?? null),
-      ),
-      settledThreads: sortSettledThreadsForSidebarV2(settled),
-      snoozeNow: preciseNow,
-    };
-  }, [
-    autoSettleAfterDays,
-    changeRequestStateByKey,
-    nowMinute,
-    scopedProjectKeys,
-    serverConfigs,
-    snoozeWakeTick,
-    threads,
-  ]);
+      return {
+        pinnedThreads: orderItemsByPreferredIds({
+          items: pinned,
+          preferredIds: codexMicroPinnedTargets,
+          getId: (thread) => encodeCodexMicroTarget(thread.environmentId, thread.id),
+        }),
+        activeThreads: sortThreadsForSidebarV2(active),
+        // Soonest wake first: "what comes back next" is the shelf's question.
+        snoozedThreads: snoozed.toSorted(
+          (left, right) =>
+            firstValidTimestampMs(left.snoozedUntil ?? null) -
+            firstValidTimestampMs(right.snoozedUntil ?? null),
+        ),
+        settledThreads: sortSettledThreadsForSidebarV2(settled),
+        snoozeNow: preciseNow,
+      };
+    }, [
+      autoSettleAfterDays,
+      changeRequestStateByKey,
+      codexMicroPinnedTargets,
+      nowMinute,
+      scopedProjectKeys,
+      serverConfigs,
+      snoozeWakeTick,
+      threads,
+      visibleProjectKeys,
+    ]);
 
   // Arm a timeout for the earliest upcoming wake so the shelf empties the
   // moment a snooze expires instead of on the next minute tick. Sorted
@@ -1513,8 +1553,8 @@ export default function SidebarV2() {
   }, [routeThreadKey, snoozedShelfExpanded, snoozedThreads]);
 
   const orderedThreads = useMemo(
-    () => [...activeThreads, ...visibleSnoozedThreads, ...renderedSettledThreads],
-    [activeThreads, visibleSnoozedThreads, renderedSettledThreads],
+    () => [...pinnedThreads, ...activeThreads, ...visibleSnoozedThreads, ...renderedSettledThreads],
+    [activeThreads, pinnedThreads, visibleSnoozedThreads, renderedSettledThreads],
   );
   const orderedThreadKeys = useMemo(
     () =>
@@ -2255,7 +2295,7 @@ export default function SidebarV2() {
                       type="button"
                       className="relative size-8 justify-center rounded-md border-0 bg-transparent p-0 text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
                       onClick={handleNewThreadClick}
-                      disabled={projects.length === 0}
+                      disabled={visibleProjects.length === 0}
                       aria-label="New thread"
                     />
                   }
@@ -2377,7 +2417,7 @@ export default function SidebarV2() {
               {(() => {
                 const renderThreadRow = (
                   thread: EnvironmentThreadShell,
-                  section: "active" | "snoozed" | "settled",
+                  section: "pinned" | "active" | "snoozed" | "settled",
                 ) => {
                   const threadKey = scopedThreadKey(
                     scopeThreadRef(thread.environmentId, thread.id),
@@ -2457,9 +2497,25 @@ export default function SidebarV2() {
                     />
                   );
                 };
-                const items: ReactNode[] = activeThreads.map((thread) =>
-                  renderThreadRow(thread, "active"),
-                );
+                const items: ReactNode[] = [];
+                if (pinnedThreads.length > 0) {
+                  items.push(
+                    <li key="pinned-header" data-thread-selection-safe className="list-none">
+                      <div className="mb-1 flex w-full items-center gap-2 px-2.5 text-left">
+                        <span className="text-xs font-medium text-violet-600 dark:text-violet-400">
+                          Pinned
+                        </span>
+                        <span className="h-px flex-1 bg-violet-500/20 dark:bg-violet-400/15" />
+                      </div>
+                    </li>,
+                  );
+                  for (const thread of pinnedThreads) {
+                    items.push(renderThreadRow(thread, "pinned"));
+                  }
+                }
+                for (const thread of activeThreads) {
+                  items.push(renderThreadRow(thread, "active"));
+                }
                 // Snoozed shelf: between the inbox and Settled — out of the
                 // way, never gone. The header always renders while anything
                 // is snoozed (the count is the whole footprint when
@@ -2539,9 +2595,13 @@ export default function SidebarV2() {
               ) : null}
             </ul>
           </TooltipProvider>
-          {activeThreads.length + snoozedThreads.length + settledThreads.length === 0 ? (
+          {pinnedThreads.length +
+            activeThreads.length +
+            snoozedThreads.length +
+            settledThreads.length ===
+          0 ? (
             <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
-              {projects.length === 0 ? (
+              {visibleProjects.length === 0 ? (
                 <>
                   <span>No projects yet</span>
                   <button
@@ -2688,6 +2748,17 @@ export default function SidebarV2() {
                     <Button
                       size="sm"
                       variant="ghost"
+                      onClick={() => {
+                        setProjectActionsTarget(null);
+                        archiveProjectMembers([member]);
+                      }}
+                    >
+                      <ArchiveIcon />
+                      Archive
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
                       className="text-destructive-foreground hover:bg-destructive/8 hover:text-destructive-foreground sm:ml-auto"
                       onClick={() => {
                         const projectGroup = projectActionsTarget;
@@ -2710,7 +2781,7 @@ export default function SidebarV2() {
                     Remove this project everywhere
                   </p>
                   <p className="text-base text-pretty text-muted-foreground sm:text-sm">
-                    Deletes all grouped entries and their conversation history.
+                    Archives every conversation and keeps the project recoverable.
                   </p>
                 </div>
                 <Button

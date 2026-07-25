@@ -128,6 +128,21 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.removeListener(IpcChannels.CODEX_MICRO_COMMAND_CHANNEL, wrappedListener);
     };
   },
+  getCodexMicroTransportState: () =>
+    ipcRenderer.invoke(IpcChannels.CODEX_MICRO_TRANSPORT_GET_STATE_CHANNEL),
+  sendCodexMicroTransportReport: (report) => {
+    ipcRenderer.send(IpcChannels.CODEX_MICRO_TRANSPORT_SEND_REPORT_CHANNEL, [...report]);
+  },
+  onCodexMicroTransportEvent: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, value: unknown) => {
+      if (typeof value !== "object" || value === null || !("kind" in value)) return;
+      listener(value as Parameters<typeof listener>[0]);
+    };
+    ipcRenderer.on(IpcChannels.CODEX_MICRO_TRANSPORT_EVENT_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.CODEX_MICRO_TRANSPORT_EVENT_CHANNEL, wrappedListener);
+    };
+  },
   getWindowFullscreenState: () =>
     ipcRenderer.sendSync(IpcChannels.GET_WINDOW_FULLSCREEN_STATE_CHANNEL) === true,
   onWindowFullscreenStateChange: (listener) => {

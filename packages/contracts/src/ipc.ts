@@ -1027,6 +1027,11 @@ export interface DesktopBridge {
   }>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   onCodexMicroCommand: (listener: (command: DesktopCodexMicroCommand) => void) => () => void;
+  getCodexMicroTransportState?: () => Promise<DesktopCodexMicroTransportState>;
+  sendCodexMicroTransportReport?: (report: readonly number[]) => void;
+  onCodexMicroTransportEvent?: (
+    listener: (event: DesktopCodexMicroTransportEvent) => void,
+  ) => () => void;
   getWindowFullscreenState: () => boolean;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;
@@ -1041,6 +1046,23 @@ export interface DesktopBridge {
    */
   preview?: DesktopPreviewBridge;
 }
+
+export type DesktopCodexMicroTransportState = {
+  readonly revision: number;
+  readonly companionConnected: boolean;
+  readonly phoneConnected: boolean;
+  readonly error: string | null;
+};
+
+export type DesktopCodexMicroTransportEvent =
+  | {
+      readonly kind: "state";
+      readonly state: DesktopCodexMicroTransportState;
+    }
+  | {
+      readonly kind: "input";
+      readonly report: readonly number[];
+    };
 
 export type DesktopCodexMicroCommand =
   | { readonly kind: "effort"; readonly direction: -1 | 1 }

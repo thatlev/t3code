@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - macOS Dictation requires an OS automation boundary.
+// @effect-diagnostics globalDate:off - Companion launch throttling is local Electron lifecycle state.
 for (const stream of [process.stdout, process.stderr]) {
   stream.on("error", (err: NodeJS.ErrnoException) => {
     if (err.code !== "EPIPE") throw err;
@@ -60,9 +61,69 @@ import * as PreviewManager from "./preview/Manager.ts";
 import * as DesktopWindow from "./window/DesktopWindow.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
+import {
+  CodexMicroCompanionTransport,
+  type CodexMicroCompanionTransportState,
+} from "./codexMicro/CodexMicroCompanionTransport.ts";
+import * as IpcChannels from "./ipc/channels.ts";
 
 const CODEX_MICRO_COMMAND_CHANNEL = "desktop:codex-micro-command";
 const SET_MAC_DICTATION_CHANNEL = "desktop:set-mac-dictation";
+
+function broadcastCodexMicroTransportEvent(value: unknown): void {
+  for (const window of Electron.BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send(IpcChannels.CODEX_MICRO_TRANSPORT_EVENT_CHANNEL, value);
+    }
+  }
+}
+
+let lastCompanionLaunchAttemptAt = 0;
+function openCodexMicroCompanion(): void {
+  if (process.platform !== "darwin") return;
+  const now = Date.now();
+  if (now - lastCompanionLaunchAttemptAt < 30_000) return;
+  lastCompanionLaunchAttemptAt = now;
+  void Electron.app.whenReady().then(
+    () =>
+      new Promise<void>((resolve) => {
+        execFile("/usr/bin/open", ["-gj", "-b", "io.github.thislev.codexmicro"], () => resolve());
+      }),
+  );
+}
+
+const codexMicroCompanionTransport = new CodexMicroCompanionTransport({
+  onState: (state: CodexMicroCompanionTransportState) => {
+    broadcastCodexMicroTransportEvent({ kind: "state", state });
+  },
+  onInput: (report) => {
+    broadcastCodexMicroTransportEvent({ kind: "input", report: [...report] });
+  },
+  onCompanionUnavailable: openCodexMicroCompanion,
+});
+
+Electron.ipcMain.removeHandler(IpcChannels.CODEX_MICRO_TRANSPORT_GET_STATE_CHANNEL);
+Electron.ipcMain.handle(IpcChannels.CODEX_MICRO_TRANSPORT_GET_STATE_CHANNEL, () =>
+  codexMicroCompanionTransport.getState(),
+);
+Electron.ipcMain.removeAllListeners(IpcChannels.CODEX_MICRO_TRANSPORT_SEND_REPORT_CHANNEL);
+Electron.ipcMain.on(
+  IpcChannels.CODEX_MICRO_TRANSPORT_SEND_REPORT_CHANNEL,
+  (_event, value: unknown) => {
+    if (
+      !Array.isArray(value) ||
+      (value.length !== 63 && value.length !== 64) ||
+      value.some(
+        (byte) => typeof byte !== "number" || !Number.isInteger(byte) || byte < 0 || byte > 255,
+      )
+    ) {
+      return;
+    }
+    codexMicroCompanionTransport.send(Uint8Array.from(value as number[]));
+  },
+);
+codexMicroCompanionTransport.start();
+Electron.app.once("before-quit", () => codexMicroCompanionTransport.stop());
 
 let macDictationActive = false;
 let macDictationQueue = Promise.resolve({
