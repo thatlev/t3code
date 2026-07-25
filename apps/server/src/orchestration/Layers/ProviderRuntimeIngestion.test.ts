@@ -361,6 +361,46 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBe("turn failed");
   });
 
+  it("presents provider usage-limit failures with a clear provider-named error", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-usage-limit-started"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-usage-limit"),
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.activeTurnId === "turn-usage-limit",
+    );
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-usage-limit-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-usage-limit"),
+      payload: {
+        state: "failed",
+        errorMessage: "rate_limit_exceeded",
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.lastError?.startsWith("Codex usage limit reached.") === true,
+    );
+    expect(thread.session?.status).toBe("error");
+    expect(thread.session?.lastError).toBe(
+      "Codex usage limit reached. Check your Codex plan or wait for the limit to reset, then try again.",
+    );
+  });
+
   it("applies provider session.state.changed transitions directly", async () => {
     const harness = await createHarness();
     const waitingAt = "2026-01-01T00:00:00.000Z";

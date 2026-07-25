@@ -29,6 +29,7 @@ import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
+import { presentProviderFailure } from "../../provider/ProviderErrorPresentation.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
@@ -254,15 +255,18 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const formatFailureDetail = (cause: Cause.Cause<unknown>): string => {
+  const formatFailureDetail = (
+    cause: Cause.Cause<unknown>,
+    provider: ProviderDriverKind,
+  ): string => {
     const failReason = cause.reasons.find(Cause.isFailReason);
     const providerError = isProviderAdapterRequestError(failReason?.error)
       ? failReason.error
       : undefined;
     if (providerError) {
-      return providerError.detail;
+      return presentProviderFailure(provider, providerError.detail);
     }
-    return Cause.pretty(cause);
+    return presentProviderFailure(provider, Cause.pretty(cause));
   };
 
   const setThreadSession = (input: {
@@ -829,7 +833,12 @@ const make = Effect.gen(function* () {
       if (Cause.hasInterruptsOnly(cause)) {
         return Effect.void;
       }
-      const detail = formatFailureDetail(cause);
+      const detail = formatFailureDetail(
+        cause,
+        ProviderDriverKind.make(
+          thread.session?.providerName ?? String(thread.modelSelection.instanceId),
+        ),
+      );
       return setThreadSessionErrorOnTurnStartFailure({
         threadId: event.payload.threadId,
         detail,

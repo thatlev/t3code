@@ -250,6 +250,68 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
+  it.effect("surfaces Kimi's empty ACP turn as a failed usage-limit turn", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const resolveSettings = yield* makeResolveCursorSettings;
+      const kimiProvider = ProviderDriverKind.make("kimi");
+      const kimiInstance = ProviderInstanceId.make("kimi");
+      const threadId = ThreadId.make("kimi-empty-prompt");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({ T3_ACP_EMPTY_PROMPT: "1" }),
+      );
+      yield* serverSettings.updateSettings({
+        providers: { cursor: { binaryPath: wrapperPath } },
+      });
+
+      const adapter = yield* makeCursorAdapter(decodeCursorSettings({}), {
+        provider: kimiProvider,
+        providerName: "Kimi",
+        instanceId: kimiInstance,
+        resolveSettings,
+      });
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: kimiProvider,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: kimiInstance, model: "default" },
+      });
+
+      const error = yield* Effect.flip(
+        adapter.sendTurn({
+          threadId,
+          input: "Reply with exactly: OK",
+          attachments: [],
+        }),
+      );
+      yield* Effect.yieldNow;
+
+      assert.equal(error._tag, "ProviderAdapterRequestError");
+      assert.include(error.message, "Kimi usage limit reached.");
+      const failedTurn = runtimeEvents.find(
+        (event) =>
+          event.type === "turn.completed" &&
+          event.threadId === threadId &&
+          event.payload.state === "failed",
+      );
+      assert.isDefined(failedTurn);
+      if (failedTurn?.type === "turn.completed") {
+        assert.include(failedTurn.payload.errorMessage, "Kimi usage limit reached.");
+      }
+
+      yield* Fiber.interrupt(runtimeEventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("steers a running turn instead of opening a new one on mid-turn sendTurn", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;

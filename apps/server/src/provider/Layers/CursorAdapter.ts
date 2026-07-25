@@ -49,6 +49,10 @@ import {
   ProviderAdapterSessionNotFoundError,
   ProviderAdapterValidationError,
 } from "../Errors.ts";
+import {
+  presentEmptyAcpTurnFailure,
+  presentProviderFailure,
+} from "../ProviderErrorPresentation.ts";
 import { acpPermissionOutcome, mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
 import type * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import {
@@ -79,7 +83,6 @@ import { resolveCursorAcpBaseModelId } from "./CursorProvider.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJsonString);
 
-const PROVIDER = ProviderDriverKind.make("cursor");
 const CURSOR_RESUME_VERSION = 1 as const;
 const ACP_PLAN_MODE_ALIASES = ["plan", "architect"];
 const ACP_IMPLEMENT_MODE_ALIASES = ["code", "agent", "default", "chat", "implement"];
@@ -140,6 +143,8 @@ interface CursorSessionContext {
    * >0 means a turn is actively running, so a new sendTurn is a steer that
    * continues it, and only the last remaining prompt settles the turn. */
   promptsInFlight: number;
+  /** True after the current turn emits assistant, plan, tool, or request activity. */
+  turnActivityObserved: boolean;
   stopped: boolean;
 }
 
@@ -784,6 +789,7 @@ export function makeCursorAdapter(
             lastPlanFingerprint: undefined,
             activeTurnId: undefined,
             promptsInFlight: 0,
+            turnActivityObserved: false,
             stopped: false,
           };
 
@@ -797,6 +803,7 @@ export function makeCursorAdapter(
                   case "ModeChanged":
                     return;
                   case "AssistantItemStarted":
+                    ctx.turnActivityObserved = true;
                     yield* offerRuntimeEvent(
                       makeAcpAssistantItemEvent({
                         stamp: yield* makeEventStamp(),
@@ -809,6 +816,7 @@ export function makeCursorAdapter(
                     );
                     return;
                   case "AssistantItemCompleted":
+                    ctx.turnActivityObserved = true;
                     yield* offerRuntimeEvent(
                       makeAcpAssistantItemEvent({
                         stamp: yield* makeEventStamp(),
@@ -821,6 +829,7 @@ export function makeCursorAdapter(
                     );
                     return;
                   case "PlanUpdated":
+                    ctx.turnActivityObserved = true;
                     yield* logNative(
                       ctx.threadId,
                       "session/update",
@@ -836,6 +845,7 @@ export function makeCursorAdapter(
                     );
                     return;
                   case "ToolCallUpdated":
+                    ctx.turnActivityObserved = true;
                     yield* logNative(
                       ctx.threadId,
                       "session/update",
@@ -854,6 +864,7 @@ export function makeCursorAdapter(
                     );
                     return;
                   case "ContentDelta":
+                    ctx.turnActivityObserved = true;
                     yield* logNative(
                       ctx.threadId,
                       "session/update",
@@ -920,6 +931,8 @@ export function makeCursorAdapter(
         // reused instead of opening a new turn.
         const steeringTurnId = ctx.promptsInFlight > 0 ? ctx.activeTurnId : undefined;
         const turnId = steeringTurnId ?? TurnId.make(yield* randomUUIDv4);
+        let turnStarted = steeringTurnId !== undefined;
+        let failureSettled = false;
         // Count this prompt immediately so a superseded in-flight prompt
         // resolving from here on does not settle the turn; the matching
         // decrement is the `ensuring` below.
@@ -947,6 +960,7 @@ export function makeCursorAdapter(
           ctx.activeTurnId = turnId;
           if (steeringTurnId === undefined) {
             ctx.lastPlanFingerprint = undefined;
+            ctx.turnActivityObserved = false;
           }
           ctx.session = {
             ...ctx.session,
@@ -963,6 +977,7 @@ export function makeCursorAdapter(
               turnId,
               payload: { model: resolvedModel },
             });
+            turnStarted = true;
           }
 
           const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
@@ -1018,6 +1033,24 @@ export function makeCursorAdapter(
                 mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),
               ),
             );
+          // A concurrent stop interrupts the notification consumer before it
+          // closes the prompt. Do not enqueue a barrier that can no longer be
+          // acknowledged in that case.
+          if (!ctx.stopped) {
+            yield* ctx.acp.drainEvents;
+          }
+
+          if (
+            result.stopReason !== "cancelled" &&
+            ctx.promptsInFlight === 1 &&
+            !ctx.turnActivityObserved
+          ) {
+            return yield* new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "session/prompt",
+              detail: presentEmptyAcpTurnFailure(PROVIDER),
+            });
+          }
 
           const turnRecord = ctx.turns.find((turn) => turn.id === turnId);
           if (turnRecord) {
@@ -1055,6 +1088,41 @@ export function makeCursorAdapter(
             resumeCursor: ctx.session.resumeCursor,
           };
         }).pipe(
+          Effect.tapError((error) => {
+            if (!turnStarted || failureSettled || ctx.promptsInFlight !== 1) {
+              return Effect.void;
+            }
+            failureSettled = true;
+            const rawDetail =
+              isRecord(error) && typeof error.detail === "string"
+                ? error.detail
+                : isRecord(error) && typeof error.message === "string"
+                  ? error.message
+                  : String(error);
+            const detail = presentProviderFailure(PROVIDER, rawDetail);
+            return Effect.gen(function* () {
+              const updatedAt = yield* nowIso;
+              const { activeTurnId: _activeTurnId, ...readySession } = ctx.session;
+              ctx.activeTurnId = undefined;
+              ctx.session = {
+                ...readySession,
+                status: "ready",
+                updatedAt,
+                lastError: detail,
+              };
+              yield* offerRuntimeEvent({
+                type: "turn.completed",
+                ...(yield* makeEventStamp()),
+                provider: PROVIDER,
+                threadId: input.threadId,
+                turnId,
+                payload: {
+                  state: "failed",
+                  errorMessage: detail,
+                },
+              });
+            });
+          }),
           Effect.ensuring(
             Effect.sync(() => {
               ctx.promptsInFlight = Math.max(0, ctx.promptsInFlight - 1);
