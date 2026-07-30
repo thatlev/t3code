@@ -152,7 +152,10 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   [CLAUDE_DRIVER_KIND]: "claude-sonnet-5",
   [CURSOR_DRIVER_KIND]: "auto",
   [GROK_DRIVER_KIND]: "grok-build",
-  [KIMI_DRIVER_KIND]: "default",
+  // Kimi's synthetic `default` model is not advertised by recent Kimi Code
+  // ACP releases. Prefer the real high-speed model so a new Kimi chat does
+  // not fail model selection or inherit K3's high-effort latency.
+  [KIMI_DRIVER_KIND]: "kimi-code/kimi-for-coding-highspeed",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
 };
 

@@ -46,6 +46,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -1210,6 +1211,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     sessions: new Map(),
     killFibers: new Map(),
   });
+  const subprocessPollWakeQueue = yield* Queue.sliding<void>(1);
   const threadLocksRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
   const terminalEventListeners = new Set<(event: TerminalEvent) => Effect.Effect<void>>();
   const workerScope = yield* Scope.make("sequential");
@@ -1916,6 +1918,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               eventStamp = advanceEventSequence(session);
               return [undefined, state] as const;
             });
+            yield* Queue.offer(subprocessPollWakeQueue, undefined);
 
             yield* publishEvent({
               type: eventType,
@@ -2109,7 +2112,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           ? pollSubprocessActivity().pipe(
               Effect.flatMap(() => Effect.sleep(subprocessPollIntervalMs)),
             )
-          : Effect.sleep(subprocessPollIntervalMs),
+          : Queue.take(subprocessPollWakeQueue).pipe(Effect.asVoid),
       ),
     ),
   ).pipe(Effect.forkIn(workerScope));

@@ -21,6 +21,7 @@ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 import { useMemo } from "react";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { useThreadsInWindowScope } from "../threadWindowScope";
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom } from "./server";
 import { allEnvironmentShellsBootstrappedAtom } from "./shell";
@@ -120,6 +121,16 @@ export function useThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
   return useAtomValue(environmentThreadShells.threadShellsAtom);
 }
 
+/**
+ * Thread shells this window is responsible for. A chat torn off into its own
+ * desktop window belongs to that window alone, so chat lists (sidebar, command
+ * palette) read this rather than the raw shells. Identical to `useThreadShells`
+ * on the web and in a window nothing has been torn out of.
+ */
+export function useVisibleThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
+  return useThreadsInWindowScope(useThreadShells());
+}
+
 export function useAllEnvironmentShellsBootstrapped(): boolean {
   return useAtomValue(allEnvironmentShellsBootstrappedAtom);
 }
@@ -128,6 +139,13 @@ export function useThreadShellsForProjectRefs(
   refs: ReadonlyArray<ScopedProjectRef>,
 ): ReadonlyArray<EnvironmentThreadShell> {
   return useAtomValue(environmentThreadShells.threadShellsForProjectRefsAtom(refs));
+}
+
+/** Per-project counterpart to {@link useVisibleThreadShells}. */
+export function useVisibleThreadShellsForProjectRefs(
+  refs: ReadonlyArray<ScopedProjectRef>,
+): ReadonlyArray<EnvironmentThreadShell> {
+  return useThreadsInWindowScope(useThreadShellsForProjectRefs(refs));
 }
 
 export function useProject(ref: ScopedProjectRef | null): EnvironmentProject | null {

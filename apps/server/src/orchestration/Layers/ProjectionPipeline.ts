@@ -809,7 +809,16 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           }
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
-            latestTurnId: event.payload.session.activeTurnId,
+            // A session going ready/stopped/error ENDS the active turn; it does
+            // not erase which turn ran last. Overwriting with a null
+            // activeTurnId dropped the whole completion record for any turn
+            // that produced no diff (`thread.turn-diff-completed` is what used
+            // to put it back), leaving the thread with no latestTurn at all:
+            // the shell then reported neither "working" nor "completed", and
+            // `hasQueuedTurnStart` refused to settle it for the whole grace
+            // window. The in-memory projector has always preserved it here —
+            // this keeps the SQLite projection in agreement.
+            latestTurnId: event.payload.session.activeTurnId ?? existingRow.value.latestTurnId,
             updatedAt: event.occurredAt,
           });
           yield* refreshThreadShellSummary(event.payload.threadId);

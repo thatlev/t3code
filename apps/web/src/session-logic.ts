@@ -710,6 +710,10 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       : null
     : extractToolDetail(payload, title ?? activity.summary);
   const toolCallId = isTaskActivity ? null : extractToolCallId(payload);
+  const taskId =
+    isTaskActivity && typeof payload?.taskId === "string" && payload.taskId.length > 0
+      ? payload.taskId
+      : null;
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
     createdAt: activity.createdAt,
@@ -762,7 +766,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (toolLifecycleStatus) {
     entry.toolLifecycleStatus = toolLifecycleStatus;
   }
-  const collapseKey = deriveToolLifecycleCollapseKey(entry);
+  const collapseKey = taskId ? `task:${taskId}` : deriveToolLifecycleCollapseKey(entry);
   if (collapseKey) {
     entry.collapseKey = collapseKey;
   }
@@ -788,6 +792,20 @@ function shouldCollapseToolLifecycleEntries(
   previous: DerivedWorkLogEntry,
   next: DerivedWorkLogEntry,
 ): boolean {
+  const previousIsTask =
+    previous.activityKind === "task.progress" || previous.activityKind === "task.completed";
+  const nextIsTask =
+    next.activityKind === "task.progress" || next.activityKind === "task.completed";
+  if (previousIsTask || nextIsTask) {
+    return (
+      previousIsTask &&
+      nextIsTask &&
+      previous.activityKind !== "task.completed" &&
+      previous.collapseKey !== undefined &&
+      previous.collapseKey === next.collapseKey
+    );
+  }
+
   if (previous.activityKind !== "tool.updated" && previous.activityKind !== "tool.completed") {
     return false;
   }

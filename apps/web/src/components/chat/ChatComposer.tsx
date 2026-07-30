@@ -79,6 +79,7 @@ import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
+import { cycleProviderReasoningEffort } from "./composerEffortCycle";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { searchSlashCommandItems } from "./composerSlashCommandSearch";
 import {
@@ -2112,23 +2113,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return !enabled;
       },
       cycleReasoningEffort: (direction: -1 | 1) => {
-        if (selectedProvider !== ProviderDriverKind.make("codex")) return null;
-        const efforts = ["low", "medium", "high", "xhigh", "max"] as const;
-        const current = composerModelOptions?.[selectedInstanceId] ?? [];
-        const currentValue = current.find((option) => option.id === "reasoningEffort")?.value;
-        const currentIndex =
-          typeof currentValue === "string"
-            ? Math.max(0, efforts.indexOf(currentValue as (typeof efforts)[number]))
-            : 1;
-        const nextIndex = Math.min(efforts.length - 1, Math.max(0, currentIndex + direction));
-        const nextEffort = efforts[nextIndex] ?? "medium";
-        const next = current.filter((option) => option.id !== "reasoningEffort");
-        next.push({ id: "reasoningEffort", value: nextEffort });
-        setComposerProviderModelOptions(composerDraftTarget, selectedProvider, next, {
+        // Descriptor-driven: the id and the available levels come from the
+        // selected model's server-reported capabilities, so the dial works for
+        // every provider (Codex `reasoningEffort`, Claude `effort`, …) instead
+        // of writing a hard-coded id that non-Codex models silently drop.
+        const stepped = cycleProviderReasoningEffort({
+          provider: selectedProvider,
+          model: selectedModel,
+          models: selectedProviderModels,
+          modelOptions: composerModelOptions?.[selectedInstanceId],
+          direction,
+        });
+        if (!stepped) return null;
+        setComposerProviderModelOptions(composerDraftTarget, selectedProvider, stepped.options, {
           instanceId: selectedInstanceId,
           model: selectedModel,
+          persistSticky: true,
         });
-        return nextEffort;
+        return stepped.value;
       },
       readSnapshot: () => {
         return readComposerSnapshot();

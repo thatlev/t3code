@@ -54,6 +54,24 @@ export function hasQueuedTurnStart(
   if (shell.session?.status === "error") return false;
   const messageAt = Date.parse(shell.latestUserMessageAt);
   if (Number.isNaN(messageAt)) return false;
+  // A session that has already SETTLED since this message cannot still be
+  // sitting on it: only "starting" and "running" mean work is in flight, and
+  // session.updatedAt stamps the status edge. The recency test is what keeps
+  // the original meaning intact — a stale `ready` session left over from an
+  // earlier turn is older than the new message, so that message still counts
+  // as queued until a session picks it up.
+  //
+  // Without this, a turn whose latestTurn record is missing or lagging reads
+  // as "queued" for the whole grace window, so settling a thread right after
+  // it finished failed with "still working" until the window expired.
+  if (
+    shell.session != null &&
+    shell.session.status !== "starting" &&
+    shell.session.status !== "running" &&
+    Date.parse(shell.session.updatedAt) >= messageAt
+  ) {
+    return false;
+  }
   const nowMs = Date.parse(options.now);
   if (Number.isNaN(nowMs)) return false;
   // Bounded on both sides: message timestamps originate on whichever device

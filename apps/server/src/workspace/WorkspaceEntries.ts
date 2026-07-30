@@ -20,6 +20,7 @@ import type {
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
 
+import * as EnvFileEntries from "./EnvFileEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
 
@@ -244,10 +245,17 @@ export const make = Effect.gen(function* () {
   const list: WorkspaceEntries["Service"]["list"] = Effect.fn("WorkspaceEntries.list")(
     function* (input) {
       const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
-      return yield* Effect.gen(function* () {
+      const listed = yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
         return yield* searchIndex.list();
       }).pipe(Effect.provide(workspaceSearchIndexes.get(normalizedCwd)));
+
+      // The index honours .gitignore and skips dotfiles, so env files never
+      // appear in it. They are the one ignored file people routinely open, so
+      // fold them back in.
+      const envRelativePaths = yield* EnvFileEntries.scanEnvFiles(normalizedCwd);
+      const entries = EnvFileEntries.mergeEnvFileEntries(listed.entries, envRelativePaths);
+      return entries === listed.entries ? listed : { ...listed, entries };
     },
   );
 

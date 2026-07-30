@@ -13,6 +13,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
@@ -72,6 +73,7 @@ export const make = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
   const identifier = yield* getTelemetryIdentifier;
   const bufferRef = yield* Ref.make<ReadonlyArray<BufferedAnalyticsEvent>>([]);
+  const flushRequests = yield* Queue.sliding<void>(1);
   const clientType = serverConfig.mode === "desktop" ? "desktop-app" : "cli-web-client";
   const hostPlatform = yield* HostProcessPlatform;
   const hostArchitecture = yield* HostProcessArchitecture;
@@ -169,12 +171,21 @@ export const make = Effect.gen(function* () {
           event,
         });
       }
+      yield* Queue.offer(flushRequests, undefined);
     },
   );
 
-  yield* Effect.forever(Effect.sleep(1000).pipe(Effect.flatMap(() => flush)), {
-    disableYield: true,
-  }).pipe(Effect.forkScoped);
+  // Block completely when telemetry is idle. Once an event arrives, retain the
+  // one-second batching window, drain duplicate wakeups, then flush the full
+  // buffer. Events recorded during a flush leave a wakeup queued for the next
+  // batch, so delivery remains best-effort without a permanent 1 Hz timer.
+  yield* Effect.forever(
+    Queue.take(flushRequests).pipe(
+      Effect.andThen(Effect.sleep(1000)),
+      Effect.andThen(Queue.takeAll(flushRequests)),
+      Effect.andThen(flush),
+    ),
+  ).pipe(Effect.forkScoped);
 
   yield* Effect.addFinalizer(() => flush);
 

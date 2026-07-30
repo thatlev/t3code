@@ -330,6 +330,52 @@ describe("hasQueuedTurnStart", () => {
     expect(hasQueuedTurnStart(makeShell({ activityAt: FRESH }), JUST_AFTER)).toBe(false);
   });
 
+  it("clears once the session settles after the message, even with no turn on record", () => {
+    // The real shape behind "settling right after a turn finished said the
+    // thread was still working": the turn ended (session ready) but the shell
+    // carried no latestTurn, so the message read as forever-unadopted.
+    const base = makeShell({ activityAt: FRESH });
+    const finished = {
+      ...base,
+      latestTurn: null,
+      latestUserMessageAt: QUEUED_AT,
+      session: {
+        threadId: base.id,
+        status: "ready" as const,
+        providerName: "Codex",
+        runtimeMode: "full-access" as const,
+        activeTurnId: null,
+        lastError: null,
+        // The session's status edge lands after the message it answered.
+        updatedAt: "2026-04-09T12:00:20.000Z",
+      },
+    };
+    expect(hasQueuedTurnStart(finished, JUST_AFTER)).toBe(false);
+    expect(canSettle(finished, JUST_AFTER)).toBe(true);
+  });
+
+  it("still flags a message newer than a leftover settled session", () => {
+    // A `ready` session from an earlier turn must not excuse a message it
+    // never saw — that is the case this whole check exists for.
+    const base = makeShell({ activityAt: FRESH });
+    const stale = {
+      ...base,
+      latestTurn: null,
+      latestUserMessageAt: QUEUED_AT,
+      session: {
+        threadId: base.id,
+        status: "ready" as const,
+        providerName: "Codex",
+        runtimeMode: "full-access" as const,
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: "2026-04-09T11:59:00.000Z",
+      },
+    };
+    expect(hasQueuedTurnStart(stale, JUST_AFTER)).toBe(true);
+    expect(canSettle(stale, JUST_AFTER)).toBe(false);
+  });
+
   it("bounds the grace window in both directions: a future-stamped message is skew, not queued work", () => {
     // Message timestamps originate on other devices; a clock an hour ahead
     // must not hold the queued state for the whole skew.

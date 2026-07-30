@@ -756,6 +756,46 @@ describe("deriveWorkLogEntries", () => {
     expect(entries[0]?.label).toBe("Searching for API endpoints");
   });
 
+  it("collapses repeated progress for the same task into its latest update", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "thinking-50",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "task.progress",
+        summary: "Thinking",
+        payload: {
+          taskId: "claude-thinking:turn-1",
+          detail: "Thinking · ~50 estimated tokens",
+        },
+      }),
+      makeActivity({
+        id: "thinking-550",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "task.progress",
+        summary: "Thinking",
+        payload: {
+          taskId: "claude-thinking:turn-1",
+          detail: "Thinking · ~550 estimated tokens",
+        },
+      }),
+      makeActivity({
+        id: "thinking-complete",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "task.completed",
+        summary: "Task completed",
+        payload: {
+          taskId: "claude-thinking:turn-1",
+          summary: "Reasoned · ~550 estimated tokens",
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.id).toBe("thinking-complete");
+    expect(entries[0]?.label).toBe("Reasoned · ~550 estimated tokens");
+  });
+
   it("uses payload detail as label for task.completed and preserves error tone", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

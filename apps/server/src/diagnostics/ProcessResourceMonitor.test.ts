@@ -118,8 +118,12 @@ describe("ProcessResourceMonitor", () => {
       expect(result.topProcesses).toHaveLength(1);
       expect(result.topProcesses[0]?.avgCpuPercent).toBe(20);
       expect(result.topProcesses[0]?.maxCpuPercent).toBe(30);
-      expect(result.topProcesses[0]?.cpuSecondsApprox).toBe(2);
-      expect(result.totalCpuSecondsApprox).toBe(2);
+      // Two samples at 10% and 30% of a core, each held for one sample
+      // interval. Stated against the reported interval so the assertion tracks
+      // the sampling cadence instead of restating it as a magic number.
+      const expectedCpuSeconds = ((10 + 30) / 100) * (result.sampleIntervalMs / 1_000);
+      expect(result.topProcesses[0]?.cpuSecondsApprox).toBe(expectedCpuSeconds);
+      expect(result.totalCpuSecondsApprox).toBe(expectedCpuSeconds);
       expect(result.buckets.some((bucket) => bucket.maxCpuPercent === 30)).toBe(true);
     }),
   );

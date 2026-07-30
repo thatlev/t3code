@@ -112,7 +112,7 @@ function threadHasQueuedTurnStart(
       readonly startedAt: string | null;
       readonly completedAt: string | null;
     } | null;
-    readonly session: { readonly status: string } | null;
+    readonly session: { readonly status: string; readonly updatedAt: string } | null;
   },
   occurredAt: string,
 ): boolean {
@@ -134,8 +134,19 @@ function threadHasQueuedTurnStart(
           ),
         );
   const queuedAgeMs = Date.parse(occurredAt) - latestUserMessageAtMs;
+  // Twin of the client's hasQueuedTurnStart: a session that has already
+  // settled since the message cannot still be sitting on it. Only "starting"
+  // and "running" mean work is in flight, and session.updatedAt stamps the
+  // status edge, so a stale session left over from an earlier turn (older than
+  // the message) still leaves that message queued.
+  const sessionSettledSinceMessage =
+    thread.session !== null &&
+    thread.session.status !== "starting" &&
+    thread.session.status !== "running" &&
+    Date.parse(thread.session.updatedAt) >= latestUserMessageAtMs;
   return (
     thread.session?.status !== "error" &&
+    !sessionSettledSinceMessage &&
     Number.isFinite(latestUserMessageAtMs) &&
     latestUserMessageAtMs > latestTurnAtMs &&
     Math.abs(queuedAgeMs) <= QUEUED_TURN_START_GRACE_MS

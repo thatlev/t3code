@@ -53,6 +53,7 @@ import {
 import { installFileEditorDismissal } from "./fileEditorDismissal";
 import { LocalCommentAnnotation } from "./LocalCommentAnnotation";
 import { projectFileCacheKey } from "./fileContentRevision";
+import { fileLanguageProps } from "./fileLanguage";
 import { fileBreadcrumbs } from "./filePath";
 import { isMarkdownPreviewFile, setMarkdownTaskChecked } from "./filePreviewMode";
 import { FileSaveCoordinator } from "./fileSaveCoordinator";
@@ -550,6 +551,7 @@ function EditableFileSurface({
               name: relativePath,
               contents,
               cacheKey: projectFileCacheKey(cwd, relativePath, contents),
+              ...fileLanguageProps(relativePath),
             }}
             options={{
               disableFileHeader: true,
@@ -898,6 +900,7 @@ export default function FilePreviewPanel({
                     name: relativePath,
                     contents: file.data.contents,
                     cacheKey: projectFileCacheKey(cwd, relativePath, file.data.contents),
+                    ...fileLanguageProps(relativePath),
                   }}
                   options={{
                     disableFileHeader: true,

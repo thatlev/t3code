@@ -1429,6 +1429,17 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       assert.deepEqual(settledRows, [
         { state: "completed", completedAt: "2026-01-01T00:01:00.000Z" },
       ]);
+
+      // The session going ready ends the turn; it must not erase which turn
+      // ran. Clearing this dropped the completion from the shell entirely for
+      // any turn that produced no diff, so the thread reported neither
+      // "working" nor "completed" and could not be settled.
+      const threadRows = yield* sql<{ readonly latestTurnId: string | null }>`
+        SELECT latest_turn_id AS "latestTurnId"
+        FROM projection_threads
+        WHERE thread_id = ${threadId}
+      `;
+      assert.deepEqual(threadRows, [{ latestTurnId: turnId }]);
     }),
   );
 

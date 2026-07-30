@@ -106,6 +106,7 @@ import {
   textContainsInlineTerminalContextLabels,
 } from "./userMessageTerminalContexts";
 import { SkillInlineText } from "./SkillInlineText";
+import { useNowSecond } from "../../hooks/useNowSecond";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import {
   buildReviewCommentRenderablePatch,
@@ -1119,27 +1120,16 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
 // does not create a React commit every second while a response is streaming.
 // ---------------------------------------------------------------------------
 
-/** Live "Working for Xs" label. */
+/**
+ * Live "Working for Xs" label. The tick comes from the shared clock, so this
+ * costs no timer of its own and stops entirely while the window is hidden.
+ * Only this leaf re-renders on a tick, never the surrounding transcript.
+ */
 function WorkingTimer({ createdAt }: { createdAt: string }) {
-  const textRef = useRef<HTMLSpanElement>(null);
-  const initialText = formatWorkingTimerNow(createdAt);
-
-  useEffect(() => {
-    const updateText = () => {
-      if (textRef.current) {
-        textRef.current.textContent = formatWorkingTimerNow(createdAt);
-      }
-    };
-    updateText();
-    const id = setInterval(updateText, 1000);
-    return () => clearInterval(id);
-  }, [createdAt]);
-
-  return (
-    <span ref={textRef} className="tabular-nums">
-      {initialText}
-    </span>
-  );
+  // Subscribing is what schedules the next re-render; the label still reads
+  // the precise current time rather than the quantized second.
+  useNowSecond();
+  return <span className="tabular-nums">{formatWorkingTimerNow(createdAt)}</span>;
 }
 
 // ---------------------------------------------------------------------------
