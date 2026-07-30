@@ -516,6 +516,17 @@ export function GeneralSettingsPanel() {
   const { theme, setTheme } = useTheme();
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
+  const [keepMacAwake, setKeepMacAwakeState] = useState(false);
+  const [keepMacAwakeBusy, setKeepMacAwakeBusy] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void window.desktopBridge?.getKeepMacAwake().then((enabled) => {
+      if (active) setKeepMacAwakeState(enabled);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
     readLastEnabledProjectGroupingMode(),
   );
@@ -561,6 +572,26 @@ export function GeneralSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection title="General">
+        {isElectron ? (
+          <SettingsRow
+            title="Keep Mac awake while T3 Code is open"
+            description="Prevents idle system sleep while allowing the display to sleep."
+            control={
+              <Switch
+                aria-label="Keep Mac awake while T3 Code is open"
+                checked={keepMacAwake}
+                disabled={keepMacAwakeBusy}
+                onCheckedChange={(enabled) => {
+                  setKeepMacAwakeBusy(true);
+                  void window.desktopBridge
+                    ?.setKeepMacAwake(enabled)
+                    .then(setKeepMacAwakeState)
+                    .finally(() => setKeepMacAwakeBusy(false));
+                }}
+              />
+            }
+          />
+        ) : null}
         <SettingsRow
           title="Theme"
           description="Choose how T3 Code looks across the app."
