@@ -27,6 +27,8 @@ const DesktopSettingsPatch = Schema.Struct({
   tailscaleServePort: Schema.optionalKey(Schema.Number),
   updateChannel: Schema.optionalKey(Schema.Literals(["latest", "nightly"])),
   updateChannelConfiguredByUser: Schema.optionalKey(Schema.Boolean),
+  remoteAccessEnabled: Schema.optionalKey(Schema.Boolean),
+  keepMacAwake: Schema.optionalKey(Schema.Boolean),
   wslBackendEnabled: Schema.optionalKey(Schema.Boolean),
   wslMode: Schema.optionalKey(Schema.Literals(["local", "wsl"])),
   wslDistro: Schema.optionalKey(Schema.NullOr(Schema.String)),
@@ -109,6 +111,8 @@ describe("DesktopSettings", () => {
         tailscaleServePort: 443,
         updateChannel: "nightly",
         updateChannelConfiguredByUser: false,
+        remoteAccessEnabled: true,
+        keepMacAwake: false,
         wslBackendEnabled: false,
         wslOnly: false,
         wslDistro: null,
@@ -126,6 +130,8 @@ describe("DesktopSettings", () => {
           tailscaleServePort: 8443,
           updateChannel: "latest",
           updateChannelConfiguredByUser: true,
+          remoteAccessEnabled: false,
+          keepMacAwake: false,
         });
 
         assert.deepEqual(yield* settings.load, {
@@ -136,6 +142,8 @@ describe("DesktopSettings", () => {
           tailscaleServePort: 8443,
           updateChannel: "latest",
           updateChannelConfiguredByUser: true,
+          remoteAccessEnabled: false,
+          keepMacAwake: false,
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
@@ -156,6 +164,10 @@ describe("DesktopSettings", () => {
         assert.isTrue(updateChannel.changed);
         assert.equal(updateChannel.settings.updateChannel, "nightly");
         assert.equal(updateChannel.settings.updateChannelConfiguredByUser, true);
+
+        const remoteAccess = yield* settings.setRemoteAccessEnabled(true);
+        assert.isTrue(remoteAccess.changed);
+        assert.equal(remoteAccess.settings.remoteAccessEnabled, true);
       }),
     ),
   );
@@ -242,6 +254,8 @@ describe("DesktopSettings", () => {
           tailscaleServePort: 8443,
           updateChannel: "latest",
           updateChannelConfiguredByUser: false,
+          remoteAccessEnabled: true,
+          keepMacAwake: false,
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
@@ -307,6 +321,8 @@ describe("DesktopSettings", () => {
           tailscaleServePort: 443,
           updateChannel: "nightly",
           updateChannelConfiguredByUser: false,
+          remoteAccessEnabled: true,
+          keepMacAwake: false,
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
@@ -324,6 +340,8 @@ describe("DesktopSettings", () => {
           serverExposureMode: "local-only",
           updateChannel: "latest",
           updateChannelConfiguredByUser: true,
+          remoteAccessEnabled: true,
+          keepMacAwake: false,
         });
 
         assert.deepEqual(yield* settings.load, {
@@ -334,6 +352,8 @@ describe("DesktopSettings", () => {
           tailscaleServePort: 443,
           updateChannel: "latest",
           updateChannelConfiguredByUser: true,
+          remoteAccessEnabled: true,
+          keepMacAwake: false,
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
@@ -360,6 +380,8 @@ describe("DesktopSettings", () => {
           tailscaleServePort: 443,
           updateChannel: "latest",
           updateChannelConfiguredByUser: false,
+          remoteAccessEnabled: true,
+          keepMacAwake: false,
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,

@@ -330,11 +330,15 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
   ): Effect.fn.Return<
     DesktopBackendManager.DesktopBackendStartConfig,
     never,
-    DesktopEnvironment.DesktopEnvironment | DesktopServerExposure.DesktopServerExposure
+    | DesktopEnvironment.DesktopEnvironment
+    | DesktopServerExposure.DesktopServerExposure
+    | DesktopAppSettings.DesktopAppSettings
   > {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+    const settings = yield* DesktopAppSettings.DesktopAppSettings;
     const backendExposure = yield* serverExposure.backendConfig;
+    const desktopSettings = yield* settings.get;
 
     const bootstrap = {
       mode: "desktop" as const,
@@ -356,6 +360,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       env: {
         ...backendChildEnvPatch(),
         ELECTRON_RUN_AS_NODE: "1",
+        T3CODE_DESKTOP_REMOTE_ACCESS: desktopSettings.remoteAccessEnabled ? "1" : "0",
       },
       // Primary wants process.env (PATH, dev-runner's T3CODE_HOME, etc.).
       extendEnv: true,
@@ -624,6 +629,7 @@ export const make = Effect.gen(function* () {
     return yield* resolvePrimaryStartConfig(shared).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
       Effect.provideService(DesktopServerExposure.DesktopServerExposure, serverExposure),
+      Effect.provideService(DesktopAppSettings.DesktopAppSettings, settings),
     );
   });
 

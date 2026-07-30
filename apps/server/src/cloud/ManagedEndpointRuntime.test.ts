@@ -80,6 +80,19 @@ function makeHandle(input: {
 }
 
 describe("CloudManagedEndpointRuntime", () => {
+  it("allows desktop-owned startup to suppress persisted connectors", () => {
+    expect(
+      ManagedEndpointRuntime.desktopRemoteAccessEnabled({
+        T3CODE_DESKTOP_REMOTE_ACCESS: "0",
+      }),
+    ).toBe(false);
+    expect(
+      ManagedEndpointRuntime.desktopRemoteAccessEnabled({
+        T3CODE_DESKTOP_REMOTE_ACCESS: "1",
+      }),
+    ).toBe(true);
+    expect(ManagedEndpointRuntime.desktopRemoteAccessEnabled({})).toBe(true);
+  });
   it("classifies Cloudflare connection and warning output", () => {
     expect(
       ManagedEndpointRuntime.classifyRelayClientOutput(

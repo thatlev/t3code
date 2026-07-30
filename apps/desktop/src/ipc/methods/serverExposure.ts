@@ -16,6 +16,16 @@ const SetTailscaleServeEnabledInput = Schema.Struct({
   port: Schema.optionalKey(Schema.Number),
 });
 
+export const afterIpcReply = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.sleep("250 millis").pipe(Effect.andThen(effect));
+
+const relaunchAfterIpcReply = Effect.fn("desktop.ipc.serverExposure.relaunchAfterReply")(function* (
+  reason: string,
+) {
+  const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+  yield* afterIpcReply(lifecycle.relaunch(reason));
+});
+
 export const getServerExposureState = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.GET_SERVER_EXPOSURE_STATE_CHANNEL,
   payload: Schema.Void,
@@ -31,11 +41,13 @@ export const setServerExposureMode = DesktopIpc.makeIpcMethod({
   payload: DesktopServerExposureModeSchema,
   result: DesktopServerExposureStateSchema,
   handler: Effect.fn("desktop.ipc.serverExposure.setMode")(function* (mode) {
-    const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
     const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
     const change = yield* serverExposure.setMode(mode);
     if (change.requiresRelaunch) {
-      yield* lifecycle.relaunch(`serverExposureMode=${mode}`);
+      // Return the successful IPC response before shutdown unregisters the
+      // handlers. Starting the relaunch inside this handler could race the
+      // renderer and produce a false "No handler registered" error.
+      yield* relaunchAfterIpcReply(`serverExposureMode=${mode}`).pipe(Effect.forkDetach);
     }
     return change.state;
   }),
@@ -46,13 +58,12 @@ export const setTailscaleServeEnabled = DesktopIpc.makeIpcMethod({
   payload: SetTailscaleServeEnabledInput,
   result: DesktopServerExposureStateSchema,
   handler: Effect.fn("desktop.ipc.serverExposure.setTailscaleServeEnabled")(function* (input) {
-    const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
     const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
     const change = yield* serverExposure.setTailscaleServeEnabled(input);
     if (change.requiresRelaunch) {
-      yield* lifecycle.relaunch(
+      yield* relaunchAfterIpcReply(
         change.state.tailscaleServeEnabled ? "tailscale-serve-enabled" : "tailscale-serve-disabled",
-      );
+      ).pipe(Effect.forkDetach);
     }
     return change.state;
   }),

@@ -20,7 +20,14 @@ function bytesToString(bytes: Uint8Array): string {
   return new TextDecoder().decode(bytes);
 }
 
+export function desktopRemoteAccessEnabled(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
+  return env.T3CODE_DESKTOP_REMOTE_ACCESS !== "0";
+}
+
 const readRuntimeConfig = Effect.gen(function* () {
+  if (!desktopRemoteAccessEnabled()) return null;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const bytes = yield* secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG);
   if (Option.isNone(bytes)) {

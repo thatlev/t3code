@@ -135,6 +135,7 @@ import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import { ServerUpdateAction } from "../ServerUpdateAction";
 import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
+import { DesktopOpenSettingsRows } from "./DesktopOpenSettingsRows";
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 const EMPTY_ADVERTISED_ENDPOINTS: ReadonlyArray<AdvertisedEndpoint> = [];
@@ -874,6 +875,9 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
               </DialogFooter>
             </DialogPopup>
           </Dialog>
+          <Button size="xs" variant="outline" onClick={() => setIsRevealDialogOpen(true)}>
+            {shareablePairingUrl ? "Show QR code" : "Show pairing code"}
+          </Button>
           <Button
             size="xs"
             variant="destructive-outline"
@@ -1039,7 +1043,7 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
           render={
             <Button size="xs" variant="default">
               <PlusIcon className="size-3" />
-              Create link
+              Pair phone
             </Button>
           }
         />
@@ -1133,7 +1137,7 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
               disabled={isCreatingPairingLink || pairingScopes.length === 0}
               onClick={() => void handleCreatePairingLink()}
             >
-              {isCreatingPairingLink ? "Creating…" : "Create link"}
+              {isCreatingPairingLink ? "Creating…" : "Create pairing code"}
             </Button>
           </DialogFooter>
         </DialogPopup>
@@ -3006,6 +3010,7 @@ export function ConnectionsSettings() {
             {desktopBridge ? (
               <>
                 {renderNetworkAccessRow()}
+                <DesktopOpenSettingsRows />
                 {renderEndpointRows("endpoint-rail")}
                 {renderTailscaleRow()}
                 {renderWslRow()}

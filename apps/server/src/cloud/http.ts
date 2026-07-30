@@ -109,6 +109,21 @@ const requireRelayUrl = relayUrlConfig.pipe(
   ),
 );
 
+export const resolveRelayUrlForExistingLink = (
+  secrets: ServerSecretStore.ServerSecretStore["Service"],
+) =>
+  secrets.get(RELAY_URL_SECRET).pipe(
+    Effect.flatMap(
+      Option.match({
+        onNone: () => requireRelayUrl,
+        onSome: (bytes) => {
+          const relayUrl = bytesToString(bytes).trim();
+          return isSecureRelayUrl(relayUrl) ? Effect.succeed(relayUrl) : requireRelayUrl;
+        },
+      }),
+    ),
+  );
+
 function bytesToString(bytes: Uint8Array): string {
   return new TextDecoder().decode(bytes);
 }
@@ -554,7 +569,7 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
     );
     const mode = yield* readCliDesiredLinkMode;
     const managedTunnelsEnabled = mode !== "publish_only";
-    const relayUrl = yield* requireRelayUrl;
+    const relayUrl = yield* resolveRelayUrlForExistingLink(dependencies.secrets);
     const challenge = yield* relayClientRequest(dependencies, {
       url: `${relayUrl}/v1/client/environment-link-challenges`,
       token: token.accessToken,

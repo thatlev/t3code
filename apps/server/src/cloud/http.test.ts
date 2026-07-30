@@ -17,7 +17,9 @@ import {
   isSupportedLinkProviderKind,
   linkProofScopes,
   reconcileDesiredCloudLink,
+  resolveRelayUrlForExistingLink,
 } from "./http.ts";
+import { RELAY_URL_SECRET } from "./config.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "./traceRelayRequest.ts";
 
@@ -164,6 +166,23 @@ describe("relay request tracing", () => {
 });
 
 describe("reconcileDesiredCloudLink", () => {
+  it.effect("uses the persisted relay URL when rebuilding an existing link", () =>
+    Effect.gen(function* () {
+      const relayUrl = "https://relay.example.test";
+      const secrets = {
+        ...makeSecretStore(unusedSecretStoreOperation),
+        get: (key: string) =>
+          Effect.succeed(
+            key === RELAY_URL_SECRET
+              ? Option.some(new TextEncoder().encode(relayUrl))
+              : Option.none(),
+          ),
+      };
+
+      expect(yield* resolveRelayUrlForExistingLink(secrets)).toBe(relayUrl);
+    }),
+  );
+
   it.effect("requires stored CLI authorization without exposing an HTTP endpoint", () =>
     Effect.gen(function* () {
       const error = yield* Effect.flip(reconcileDesiredCloudLink("http://127.0.0.1:3774"));

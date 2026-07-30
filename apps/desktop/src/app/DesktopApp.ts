@@ -17,6 +17,7 @@ import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
+import * as DesktopKeepAwake from "./DesktopKeepAwake.ts";
 import * as DesktopObservability from "./DesktopObservability.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
@@ -223,6 +224,7 @@ const startup = Effect.gen(function* () {
   const clerk = yield* DesktopClerk.DesktopClerk;
   const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
+  const keepAwake = yield* DesktopKeepAwake.DesktopKeepAwake;
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
 
@@ -230,7 +232,8 @@ const startup = Effect.gen(function* () {
   const userDataPath = yield* appIdentity.resolveUserDataPath;
   yield* electronApp.setPath("userData", userDataPath);
   yield* logStartupInfo("runtime logging configured", { logDir: environment.logDir });
-  yield* desktopSettings.load;
+  const loadedSettings = yield* desktopSettings.load;
+  yield* keepAwake.reconcile(loadedSettings.keepMacAwake);
 
   if (environment.platform === "linux") {
     yield* electronApp.appendCommandLineSwitch("class", environment.linuxWmClass);
