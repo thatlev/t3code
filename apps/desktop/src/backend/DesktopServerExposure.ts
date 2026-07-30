@@ -426,7 +426,39 @@ export const make = Effect.gen(function* () {
 
   const readNetworkInterfaces = networkInterfaces.read;
 
-  const getState = Ref.get(stateRef).pipe(Effect.map(toContractState));
+  // The bound host and port are fixed for the life of the backend process, but
+  // the address that reaches it is not: Wi-Fi reconnects, hotspots, VPNs, and
+  // wake-from-sleep all move the machine's LAN IP while the socket stays bound
+  // to 0.0.0.0. Re-resolve the advertised host on every read so the Connections
+  // panel and the pairing URLs built from it point at the address the backend
+  // answers on right now, not the one that happened to exist at launch.
+  const refreshAdvertisedHost = (
+    currentNetworkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces,
+  ) =>
+    Ref.updateAndGet(stateRef, (current) => {
+      // local-only means the socket really is loopback-bound, so there is
+      // nothing to advertise even when the machine does have a LAN address.
+      if (current.mode !== "network-accessible") return current;
+
+      const advertisedHost = resolveLanAdvertisedHost(
+        currentNetworkInterfaces,
+        Option.getOrUndefined(config.desktopLanHostOverride),
+      );
+      if (advertisedHost === Option.getOrNull(current.advertisedHost)) return current;
+
+      return {
+        ...current,
+        advertisedHost: Option.fromNullishOr(advertisedHost),
+        endpointUrl: Option.fromNullishOr(
+          advertisedHost === null ? null : `http://${advertisedHost}:${current.port}`,
+        ),
+      };
+    });
+
+  const getState = readNetworkInterfaces.pipe(
+    Effect.flatMap(refreshAdvertisedHost),
+    Effect.map(toContractState),
+  );
   const backendConfig = Ref.get(stateRef).pipe(Effect.map(toBackendConfig));
 
   const configureFromSettings = Effect.fn("desktop.serverExposure.configureFromSettings")(
@@ -522,8 +554,8 @@ export const make = Effect.gen(function* () {
   );
 
   const getAdvertisedEndpoints = Effect.gen(function* () {
-    const state = yield* Ref.get(stateRef);
     const currentNetworkInterfaces = yield* readNetworkInterfaces;
+    const state = yield* refreshAdvertisedHost(currentNetworkInterfaces);
     const coreEndpoints = resolveDesktopCoreAdvertisedEndpoints({
       port: state.port,
       exposure: toResolvedExposure(state),

@@ -28,6 +28,16 @@ const lanNetworkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces = {
   ],
 };
 
+const hotspotNetworkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces = {
+  en0: [
+    {
+      address: "172.20.10.3",
+      family: "IPv4",
+      internal: false,
+    },
+  ],
+};
+
 const tailnetNetworkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces = {
   tailscale0: [
     {
@@ -86,9 +96,20 @@ function makeEnvironmentLayer(baseDir: string, env: Record<string, string | unde
   );
 }
 
+// Either a fixed snapshot or a read effect, so a test can model the machine's
+// LAN address changing while the app stays running.
+type NetworkInterfacesSource =
+  | DesktopNetworkInterfaces.NetworkInterfaces
+  | Effect.Effect<DesktopNetworkInterfaces.NetworkInterfaces>;
+
+const readNetworkInterfacesFrom = (
+  source: NetworkInterfacesSource,
+): Effect.Effect<DesktopNetworkInterfaces.NetworkInterfaces> =>
+  Effect.isEffect(source) ? source : Effect.succeed(source);
+
 function makeLayer(input: {
   readonly baseDir: string;
-  readonly networkInterfaces?: DesktopNetworkInterfaces.NetworkInterfaces;
+  readonly networkInterfaces?: NetworkInterfacesSource;
   readonly env?: Record<string, string | undefined>;
   readonly spawnerLayer?: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>;
   readonly desktopSettingsLayer?: Layer.Layer<DesktopAppSettings.DesktopAppSettings>;
@@ -96,7 +117,7 @@ function makeLayer(input: {
   const env = { T3CODE_HOME: input.baseDir, ...input.env };
   const environmentLayer = makeEnvironmentLayer(input.baseDir, env);
   const networkLayer = Layer.succeed(DesktopNetworkInterfaces.DesktopNetworkInterfaces, {
-    read: Effect.succeed(input.networkInterfaces ?? emptyNetworkInterfaces),
+    read: readNetworkInterfacesFrom(input.networkInterfaces ?? emptyNetworkInterfaces),
   });
 
   return DesktopServerExposure.layer.pipe(
@@ -111,7 +132,7 @@ function makeLayer(input: {
 }
 
 const withHarness = <A, E, R>(
-  networkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces,
+  networkInterfaces: NetworkInterfacesSource,
   effect: Effect.Effect<
     A,
     E,
@@ -254,6 +275,8 @@ describe("DesktopServerExposure", () => {
       setServerExposureMode: () => Effect.fail(settingsFailure),
       setTailscaleServe: () => Effect.fail(settingsFailure),
       setUpdateChannel: () => Effect.die("unexpected update channel change"),
+      setKeepMacAwake: () => Effect.die("unexpected keep awake change"),
+      setRemoteAccessEnabled: () => Effect.die("unexpected remote access change"),
       setWslBackendEnabled: () => Effect.die("unexpected WSL backend toggle"),
       setWslDistro: () => Effect.die("unexpected WSL distro change"),
       setWslOnly: () => Effect.die("unexpected WSL-only toggle"),
@@ -321,6 +344,56 @@ describe("DesktopServerExposure", () => {
           ["http://127.0.0.1:4173/", "http://192.168.1.20:4173/", "http://100.90.1.2:4173/"],
         );
       }),
+    ),
+  );
+
+  it.effect("re-resolves the advertised LAN host after the machine changes network", () => {
+    let currentInterfaces = lanNetworkInterfaces;
+
+    return withHarness(
+      Effect.sync(() => currentInterfaces),
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+        const change = yield* serverExposure.setMode("network-accessible");
+        assert.equal(change.state.endpointUrl, "http://192.168.1.20:4173");
+
+        currentInterfaces = hotspotNetworkInterfaces;
+
+        // The socket stays bound to 0.0.0.0, so only the address we hand out
+        // has to follow the machine onto its new network.
+        const state = yield* serverExposure.getState;
+        assert.equal(state.advertisedHost, "172.20.10.3");
+        assert.equal(state.endpointUrl, "http://172.20.10.3:4173");
+
+        const endpoints = yield* serverExposure.getAdvertisedEndpoints;
+        assert.include(
+          endpoints.map((endpoint) => endpoint.httpBaseUrl),
+          "http://172.20.10.3:4173/",
+        );
+
+        const backendConfig = yield* serverExposure.backendConfig;
+        assert.equal(backendConfig.bindHost, "0.0.0.0");
+      }),
+    );
+  });
+
+  it.effect("keeps advertising loopback only while server exposure is local-only", () =>
+    withHarness(
+      lanNetworkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+
+        // A LAN address exists, but the socket is loopback-bound, so refreshing
+        // must not start advertising an address nothing is listening on.
+        const state = yield* serverExposure.getState;
+        assert.equal(state.mode, "local-only");
+        assert.equal(state.advertisedHost, null);
+        assert.equal(state.endpointUrl, null);
+      }),
+      {},
+      dieOnSpawnLayer(),
     ),
   );
 
