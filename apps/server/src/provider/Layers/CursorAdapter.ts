@@ -145,6 +145,12 @@ interface CursorSessionContext {
   promptsInFlight: number;
   /** True after the current turn emits assistant, plan, tool, or request activity. */
   turnActivityObserved: boolean;
+  /**
+   * Incremented whenever Stop is requested. A prompt captures the value before
+   * model/mode setup so a Stop click during that setup cannot be lost and then
+   * accidentally start generation afterward.
+   */
+  interruptGeneration: number;
   stopped: boolean;
 }
 
@@ -790,6 +796,7 @@ export function makeCursorAdapter(
             activeTurnId: undefined,
             promptsInFlight: 0,
             turnActivityObserved: false,
+            interruptGeneration: 0,
             stopped: false,
           };
 
@@ -931,6 +938,7 @@ export function makeCursorAdapter(
         // reused instead of opening a new turn.
         const steeringTurnId = ctx.promptsInFlight > 0 ? ctx.activeTurnId : undefined;
         const turnId = steeringTurnId ?? TurnId.make(yield* randomUUIDv4);
+        const interruptGeneration = ctx.interruptGeneration;
         let turnStarted = steeringTurnId !== undefined;
         let failureSettled = false;
         // Count this prompt immediately so a superseded in-flight prompt
@@ -1024,15 +1032,18 @@ export function makeCursorAdapter(
             });
           }
 
-          const result = yield* ctx.acp
-            .prompt({
-              prompt: promptParts,
-            })
-            .pipe(
-              Effect.mapError((error) =>
-                mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),
-              ),
-            );
+          const result =
+            ctx.interruptGeneration !== interruptGeneration
+              ? ({ stopReason: "cancelled" } as const)
+              : yield* ctx.acp
+                  .prompt({
+                    prompt: promptParts,
+                  })
+                  .pipe(
+                    Effect.mapError((error) =>
+                      mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),
+                    ),
+                  );
           // A concurrent stop interrupts the notification consumer before it
           // closes the prompt. Do not enqueue a barrier that can no longer be
           // acknowledged in that case.
@@ -1134,6 +1145,7 @@ export function makeCursorAdapter(
     const interruptTurn: CursorAdapterShape["interruptTurn"] = (threadId) =>
       Effect.gen(function* () {
         const ctx = yield* requireSession(threadId);
+        ctx.interruptGeneration += 1;
         yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
         yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
         yield* Effect.ignore(

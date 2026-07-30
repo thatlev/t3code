@@ -55,6 +55,7 @@ export interface AcpSpawnInput {
   readonly args: ReadonlyArray<string>;
   readonly cwd?: string;
   readonly env?: NodeJS.ProcessEnv;
+  readonly forceKillAfter?: Duration.Input;
 }
 
 export interface AcpSessionRuntimeOptions {
@@ -339,6 +340,7 @@ export const make = (
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
           ...(options.spawn.cwd ? { cwd: options.spawn.cwd } : {}),
           ...(options.spawn.env ? { env: options.spawn.env, extendEnv: true } : {}),
+          ...(options.spawn.forceKillAfter ? { forceKillAfter: options.spawn.forceKillAfter } : {}),
           shell: spawnCommand.shell,
         }),
       )
@@ -761,13 +763,15 @@ export const make = (
       cancel: getStartedState.pipe(
         Effect.flatMap((started) =>
           Effect.gen(function* () {
+            // Notify the agent before interrupting the local request fiber.
+            // Some ACP agents (notably Kimi Code) tie cancellation to the
+            // still-active prompt request and otherwise keep generating in
+            // the child process after T3 Code's UI has stopped waiting.
+            yield* acp.agent.cancel({ sessionId: started.sessionId }).pipe(Effect.ignore);
             const activePromptFiber = yield* Ref.get(activePromptFiberRef);
             if (Option.isSome(activePromptFiber)) {
               yield* Fiber.interrupt(activePromptFiber.value).pipe(Effect.ignore);
             }
-            yield* acp.agent
-              .cancel({ sessionId: started.sessionId })
-              .pipe(Effect.ignore, Effect.forkIn(runtimeScope));
           }),
         ),
       ),

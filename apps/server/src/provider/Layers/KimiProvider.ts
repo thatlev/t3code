@@ -76,6 +76,12 @@ type KimiProviderCatalog = {
   readonly models?: unknown;
 };
 
+const KIMI_DEFAULT_MODEL_PREFERENCE = [
+  "kimi-code/kimi-for-coding-highspeed",
+  "kimi-code/k3",
+  "kimi-code/kimi-for-coding",
+] as const;
+
 export function modelsFromKimiProviderCatalog(raw: string): ReadonlyArray<ServerProviderModel> {
   let catalog: KimiProviderCatalog;
   try {
@@ -87,8 +93,13 @@ export function modelsFromKimiProviderCatalog(raw: string): ReadonlyArray<Server
     return [];
   }
 
-  const defaultModel =
+  const configuredDefaultModel =
     typeof catalog.defaultModel === "string" ? catalog.defaultModel.trim() : undefined;
+  const modelIds = new Set(Object.keys(catalog.models as Record<string, unknown>));
+  const defaultModel =
+    configuredDefaultModel && modelIds.has(configuredDefaultModel)
+      ? configuredDefaultModel
+      : KIMI_DEFAULT_MODEL_PREFERENCE.find((model) => modelIds.has(model));
   return Object.entries(catalog.models as Record<string, unknown>).flatMap(
     ([rawSlug, rawModel]) => {
       const slug = rawSlug.trim();

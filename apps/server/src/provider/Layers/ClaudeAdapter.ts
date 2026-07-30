@@ -178,6 +178,13 @@ interface ClaudeTaskState {
   readonly blockedBy: Set<string>;
 }
 
+interface ClaudeThinkingProgress {
+  readonly turnId: TurnId;
+  readonly taskId: RuntimeTaskId;
+  estimatedTokens: number;
+  lastEmittedTokens: number;
+}
+
 interface ClaudeSessionContext {
   session: ProviderSession;
   readonly promptQueue: Queue.Queue<PromptQueueItem>;
@@ -196,6 +203,7 @@ interface ClaudeSessionContext {
   readonly inFlightTools: Map<number, ToolInFlight>;
   readonly claudeTasks: Map<string, ClaudeTaskState>;
   turnState: ClaudeTurnState | undefined;
+  thinkingProgress: ClaudeThinkingProgress | undefined;
   lastKnownContextWindow: number | undefined;
   lastKnownTokenUsage: ThreadTokenUsageSnapshot | undefined;
   lastKnownTotalProcessedTokens: number | undefined;
@@ -311,10 +319,14 @@ function isInterruptedResult(result: SDKResultMessage): boolean {
 
   return (
     result.subtype === "error_during_execution" &&
-    result.is_error === false &&
-    (errors.includes("request was aborted") ||
-      errors.includes("interrupted by user") ||
-      errors.includes("aborted"))
+    ((result.is_error === false &&
+      (errors.includes("request was aborted") ||
+        errors.includes("interrupted by user") ||
+        errors.includes("aborted"))) ||
+      // Claude Code 2.1.220 emits this internal diagnostic after writing
+      // "[Request interrupted by user]" to the resumed session transcript.
+      // It is an interrupt receipt, not a provider failure.
+      errors.includes("[ede_diagnostic] result_type=user"))
   );
 }
 
@@ -1877,6 +1889,104 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     });
   });
 
+  const emitClaudeThinkingProgress = Effect.fn("emitClaudeThinkingProgress")(function* (
+    context: ClaudeSessionContext,
+    message: Extract<SDKMessage, { type: "system"; subtype: "thinking_tokens" }>,
+  ) {
+    const turnState = context.turnState;
+    if (!turnState) {
+      return;
+    }
+
+    const estimatedDelta = finiteNonNegativeInteger(message.estimated_tokens_delta) ?? 0;
+    const currentBlockEstimate = finiteNonNegativeInteger(message.estimated_tokens) ?? 0;
+    let progress = context.thinkingProgress;
+    if (!progress || progress.turnId !== turnState.turnId) {
+      progress = {
+        turnId: turnState.turnId,
+        taskId: RuntimeTaskId.make(`claude-thinking:${turnState.turnId}`),
+        estimatedTokens: 0,
+        lastEmittedTokens: 0,
+      };
+      context.thinkingProgress = progress;
+    }
+
+    progress.estimatedTokens =
+      estimatedDelta > 0
+        ? progress.estimatedTokens + estimatedDelta
+        : Math.max(progress.estimatedTokens, currentBlockEstimate);
+    if (
+      progress.estimatedTokens <= 0 ||
+      (progress.lastEmittedTokens > 0 &&
+        progress.estimatedTokens - progress.lastEmittedTokens < 500)
+    ) {
+      return;
+    }
+    progress.lastEmittedTokens = progress.estimatedTokens;
+
+    const stamp = yield* makeEventStamp();
+    yield* offerRuntimeEvent({
+      type: "task.progress",
+      eventId: stamp.eventId,
+      provider: PROVIDER,
+      createdAt: stamp.createdAt,
+      threadId: context.session.threadId,
+      turnId: turnState.turnId,
+      payload: {
+        taskId: progress.taskId,
+        description: `Thinking · ~${progress.estimatedTokens.toLocaleString("en-US")} estimated tokens`,
+        usage: {
+          estimatedThinkingTokens: progress.estimatedTokens,
+          authoritative: false,
+        },
+      },
+      providerRefs: nativeProviderRefs(context),
+      raw: {
+        source: "claude.sdk.message",
+        method: "claude/system/thinking_tokens",
+        messageType: "system:thinking_tokens",
+        payload: message,
+      },
+    });
+  });
+
+  const completeClaudeThinkingProgress = Effect.fn("completeClaudeThinkingProgress")(function* (
+    context: ClaudeSessionContext,
+    status: ProviderRuntimeTurnStatus,
+  ) {
+    const progress = context.thinkingProgress;
+    const turnState = context.turnState;
+    if (!progress || !turnState || progress.turnId !== turnState.turnId) {
+      return;
+    }
+
+    context.thinkingProgress = undefined;
+    const stamp = yield* makeEventStamp();
+    yield* offerRuntimeEvent({
+      type: "task.completed",
+      eventId: stamp.eventId,
+      provider: PROVIDER,
+      createdAt: stamp.createdAt,
+      threadId: context.session.threadId,
+      turnId: turnState.turnId,
+      payload: {
+        taskId: progress.taskId,
+        status:
+          status === "completed"
+            ? "completed"
+            : status === "interrupted" || status === "cancelled"
+              ? "stopped"
+              : "failed",
+        summary: `Reasoned · ~${progress.estimatedTokens.toLocaleString("en-US")} estimated tokens`,
+        usage: {
+          estimatedThinkingTokens: progress.estimatedTokens,
+          authoritative: false,
+        },
+      },
+      providerRefs: nativeProviderRefs(context),
+    });
+  });
+
   const completeTurn = Effect.fn("completeTurn")(function* (
     context: ClaudeSessionContext,
     status: ProviderRuntimeTurnStatus,
@@ -2015,6 +2125,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
     // Clear any remaining stale entries (e.g. from interrupted content blocks)
     context.inFlightTools.clear();
+
+    yield* completeClaudeThinkingProgress(context, status);
 
     for (const block of turnState.assistantTextBlockOrder) {
       yield* completeAssistantTextBlock(context, block, {
@@ -2757,6 +2869,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         });
         return;
       case "thinking_tokens":
+        yield* emitClaudeThinkingProgress(context, message);
         return;
       case "api_retry":
         // Transport-level retry heartbeat. Surfacing each attempt as a
@@ -3634,6 +3747,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         inFlightTools,
         claudeTasks,
         turnState: undefined,
+        thinkingProgress: undefined,
         lastKnownContextWindow: initialContextWindow,
         lastKnownTokenUsage: undefined,
         lastKnownTotalProcessedTokens: undefined,

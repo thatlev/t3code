@@ -30,7 +30,8 @@ describe.runIf(process.env.T3_KIMI_ACP_PROBE === "1")("Kimi ACP CLI probe", () =
         const values = effort.options.flatMap((entry) =>
           "value" in entry ? [entry.value] : entry.options.map((option) => option.value),
         );
-        const supported = ["low", "high", "max"].filter((value) => values.includes(value));
+        const supportedValues = new Set(values);
+        const supported = ["low", "high", "max"].filter((value) => supportedValues.has(value));
         expect(supported.length).toBeGreaterThan(0);
         yield* runtime.setConfigOption(
           effort.id,
@@ -40,7 +41,12 @@ describe.runIf(process.env.T3_KIMI_ACP_PROBE === "1")("Kimi ACP CLI probe", () =
     }).pipe(
       Effect.provide(
         AcpSessionRuntime.layer({
-          spawn: { command: "kimi", args: ["acp"], cwd: process.cwd() },
+          spawn: {
+            command: "kimi",
+            args: ["acp"],
+            cwd: process.cwd(),
+            forceKillAfter: "2 seconds",
+          },
           cwd: process.cwd(),
           clientCapabilities: CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES,
           clientInfo: { name: "t3-kimi-probe", version: "0.0.0" },

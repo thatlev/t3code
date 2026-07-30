@@ -8,6 +8,7 @@ describe("buildKimiAcpSpawnInput", () => {
       command: "kimi",
       args: ["acp"],
       cwd: "/tmp/project",
+      forceKillAfter: "2 seconds",
     });
   });
 
@@ -23,6 +24,7 @@ describe("buildKimiAcpSpawnInput", () => {
       command: "/Applications/Kimi/bin/kimi",
       args: ["acp"],
       cwd: "/tmp/project",
+      forceKillAfter: "2 seconds",
       env: environment,
     });
   });

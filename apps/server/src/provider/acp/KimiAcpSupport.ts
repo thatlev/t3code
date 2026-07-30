@@ -29,6 +29,9 @@ export function buildKimiAcpSpawnInput(
     command: settings?.binaryPath || "kimi",
     args: ["acp"],
     cwd,
+    // Kimi 0.29 drains indefinitely after SIGTERM in some ACP states. Bound
+    // shutdown so Stop/session cleanup cannot leave T3 Code waiting forever.
+    forceKillAfter: "2 seconds",
     ...(environment ? { env: environment } : {}),
   };
 }

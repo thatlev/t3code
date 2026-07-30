@@ -44,6 +44,24 @@ describe("modelsFromKimiProviderCatalog", () => {
     });
   });
 
+  it("prefers Kimi's real high-speed model when the CLI omits defaultModel", () => {
+    const models = modelsFromKimiProviderCatalog(
+      JSON.stringify({
+        models: {
+          "kimi-code/kimi-for-coding": { displayName: "K2.7 Coding" },
+          "kimi-code/kimi-for-coding-highspeed": {
+            displayName: "K2.7 Coding Highspeed",
+          },
+          "kimi-code/k3": { displayName: "K3" },
+        },
+      }),
+    );
+
+    expect(models.find((model) => model.isDefault)?.slug).toBe(
+      "kimi-code/kimi-for-coding-highspeed",
+    );
+  });
+
   it("returns no models for malformed output", () => {
     expect(modelsFromKimiProviderCatalog("not json")).toEqual([]);
   });
