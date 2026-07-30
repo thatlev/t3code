@@ -17,8 +17,11 @@ import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
+import * as DesktopThreadWindows from "../../window/DesktopThreadWindows.ts";
+import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronMenu from "../../electron/ElectronMenu.ts";
+import * as ElectronProtocol from "../../electron/ElectronProtocol.ts";
 import * as ElectronShell from "../../electron/ElectronShell.ts";
 import * as ElectronTheme from "../../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
@@ -38,6 +41,26 @@ const ContextMenuPosition = Schema.Struct({
 const ContextMenuInput = Schema.Struct({
   items: Schema.Array(ContextMenuItemSchema),
   position: Schema.optionalKey(ContextMenuPosition),
+});
+
+const OpenThreadWindowInput = Schema.Struct({
+  environmentId: Schema.String.check(Schema.isNonEmpty()),
+  threadId: Schema.String.check(Schema.isNonEmpty()),
+  // Screen coordinates of the point the chat was dropped at, null when the
+  // window is opened without a drag (menu, keyboard).
+  anchor: Schema.NullOr(
+    Schema.Struct({
+      x: Schema.Finite,
+      y: Schema.Finite,
+    }),
+  ),
+  // Size of the window the chat was torn off, so the new one matches it.
+  size: Schema.NullOr(
+    Schema.Struct({
+      width: Schema.Finite,
+      height: Schema.Finite,
+    }),
+  ),
 });
 
 function toWebSocketBaseUrl(httpBaseUrl: URL): string {
@@ -231,10 +254,11 @@ export const confirm = DesktopIpc.makeIpcMethod({
 export const setTheme = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.SET_THEME_CHANNEL,
   payload: DesktopThemeSchema,
-  result: Schema.Void,
+  result: Schema.Boolean,
   handler: Effect.fn("desktop.ipc.window.setTheme")(function* (theme) {
     const electronTheme = yield* ElectronTheme.ElectronTheme;
     yield* electronTheme.setSource(theme);
+    return yield* electronTheme.shouldUseDarkColors;
   }),
 });
 
@@ -257,6 +281,68 @@ export const showContextMenu = DesktopIpc.makeIpcMethod({
     });
     return Option.getOrNull(selectedItemId);
   }),
+});
+
+/**
+ * Tears a chat off into its own app window, the way a browser tab detaches.
+ * The renderer decides *when* (a drag released outside every window); placement
+ * and window lifecycle stay here.
+ */
+export const openThreadWindow = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.OPEN_THREAD_WINDOW_CHANNEL,
+  payload: OpenThreadWindowInput,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.openThreadWindow")(function* (input) {
+    const desktopWindow = yield* DesktopWindow.DesktopWindow;
+    yield* desktopWindow.openDetachedWindow({
+      routeHash: ElectronProtocol.getThreadRouteHash(input),
+      threadKey: DesktopThreadWindows.desktopThreadKey(input),
+      anchor: input.anchor,
+      size: input.size,
+    });
+  }),
+});
+
+/**
+ * Records that the calling window is now showing a chat, moving it out of
+ * whichever window held it before. This is what keeps a chat in exactly one
+ * window as the user navigates, and what returns a torn-off chat to the main
+ * window when it is reopened there.
+ */
+/**
+ * Raises the window holding a chat and points it there, instead of pulling the
+ * chat into the caller. Returns false when no other window holds it, which
+ * means the caller should just navigate itself.
+ */
+export const focusThreadWindow = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.FOCUS_THREAD_WINDOW_CHANNEL,
+  payload: Schema.String.check(Schema.isNonEmpty()),
+  result: Schema.Boolean,
+  handler: (threadKey, caller) =>
+    Effect.sync(() =>
+      caller.webContentsId === null
+        ? false
+        : DesktopThreadWindows.desktopThreadWindows.focusThread({
+            threadKey,
+            requesterWebContentsId: caller.webContentsId,
+          }),
+    ).pipe(Effect.withSpan("desktop.ipc.window.focusThreadWindow")),
+});
+
+export const claimThreadWindow = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.CLAIM_THREAD_WINDOW_CHANNEL,
+  payload: Schema.String.check(Schema.isNonEmpty()),
+  result: Schema.Void,
+  handler: (threadKey, caller) =>
+    Effect.sync(() => {
+      if (caller.webContentsId === null) {
+        return;
+      }
+      DesktopThreadWindows.desktopThreadWindows.claim({
+        webContentsId: caller.webContentsId,
+        threadKey,
+      });
+    }).pipe(Effect.withSpan("desktop.ipc.window.claimThreadWindow")),
 });
 
 export const openExternal = DesktopIpc.makeIpcMethod({

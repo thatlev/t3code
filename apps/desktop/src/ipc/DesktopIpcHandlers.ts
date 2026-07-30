@@ -37,12 +37,17 @@ import {
   getLocalEnvironmentBearerToken,
   getWindowFullscreenState,
   openExternal,
+  claimThreadWindow,
+  focusThreadWindow,
+  openThreadWindow,
   pickFolder,
   setTheme,
   showContextMenu,
 } from "./methods/window.ts";
 import * as PreviewIpc from "./methods/preview.ts";
 import { getWslState, setWslBackendEnabled, setWslDistro, setWslOnly } from "./methods/wsl.ts";
+import { getKeepMacAwake, setKeepMacAwake } from "./methods/keepAwake.ts";
+import { getRemoteAccessEnabled, setRemoteAccessEnabled } from "./methods/remoteAccess.ts";
 
 export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers")(function* () {
   const ipc = yield* DesktopIpc.DesktopIpc;
@@ -55,6 +60,10 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
 
   yield* ipc.handle(getClientSettings);
   yield* ipc.handle(setClientSettings);
+  yield* ipc.handle(getKeepMacAwake);
+  yield* ipc.handle(setKeepMacAwake);
+  yield* ipc.handle(getRemoteAccessEnabled);
+  yield* ipc.handle(setRemoteAccessEnabled);
   yield* ipc.handle(getConnectionCatalog);
   yield* ipc.handle(setConnectionCatalog);
   yield* ipc.handle(clearConnectionCatalog);
@@ -83,6 +92,9 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(setTheme);
   yield* ipc.handle(showContextMenu);
   yield* ipc.handle(openExternal);
+  yield* ipc.handle(openThreadWindow);
+  yield* ipc.handle(claimThreadWindow);
+  yield* ipc.handle(focusThreadWindow);
   yield* ipc.handle(getUpdateState);
   yield* ipc.handle(setUpdateChannel);
   yield* ipc.handle(downloadUpdate);

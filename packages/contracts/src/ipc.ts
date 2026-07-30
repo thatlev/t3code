@@ -972,6 +972,32 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
   input: PreviewAutomationWaitForInput,
 });
 
+export interface DesktopThreadWindowRequest {
+  readonly environmentId: string;
+  readonly threadId: string;
+  /** Screen coordinates the chat was dropped at; null centres the window. */
+  readonly anchor: { readonly x: number; readonly y: number } | null;
+  /** Size to open at; null inherits the size of the window it came from. */
+  readonly size: { readonly width: number; readonly height: number } | null;
+}
+
+/**
+ * Which chats a desktop window is responsible for. Chats belong to exactly one
+ * window at a time, so tearing one off removes it from the window it came from
+ * rather than mirroring it.
+ */
+export type DesktopThreadWindowScope =
+  | {
+      /** The catch-all window: every chat except those living in other windows. */
+      readonly kind: "all";
+      readonly hiddenThreadKeys: readonly string[];
+    }
+  | {
+      /** A torn-off window: exactly these chats, nothing else. */
+      readonly kind: "only";
+      readonly threadKeys: readonly string[];
+    };
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   // One bootstrap per pool instance currently registered with bootstrap
@@ -1015,16 +1041,44 @@ export interface DesktopBridge {
   setWslOnly: (enabled: boolean) => Promise<DesktopWslState>;
   pickFolder: (options?: PickFolderOptions) => Promise<string | null>;
   confirm: (message: string) => Promise<boolean>;
-  setTheme: (theme: DesktopTheme) => Promise<void>;
+  setTheme: (theme: DesktopTheme) => Promise<boolean>;
   showContextMenu: <T extends string>(
     items: readonly ContextMenuItem<T>[],
     position?: { x: number; y: number },
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
+  /**
+   * Tears a chat off into its own desktop window, positioned at the screen
+   * point it was dropped on. Optional so web builds (and older desktop shells)
+   * can feature-detect it.
+   */
+  openThreadWindow?: (request: DesktopThreadWindowRequest) => Promise<void>;
+  /**
+   * This window's chat scope at load time, known synchronously so a torn-off
+   * window never paints the full chat list before its scope arrives. Null in
+   * web builds and in windows the desktop shell does not scope.
+   */
+  getInitialThreadWindowScope?: () => DesktopThreadWindowScope | null;
+  onThreadWindowScopeChange?: (listener: (scope: DesktopThreadWindowScope) => void) => () => void;
+  /**
+   * Declares that this window is now showing the given chat, moving it here
+   * from whichever window held it before.
+   */
+  claimThreadWindow?: (threadKey: string) => void;
+  /**
+   * Raises the window that holds a chat and points it there. Resolves false
+   * when no other window holds it, meaning the caller should navigate itself.
+   */
+  focusThreadWindow?: (threadKey: string) => Promise<boolean>;
+  onThreadWindowFocus?: (listener: (threadKey: string) => void) => () => void;
   setMacDictation: (active: boolean) => Promise<{
     readonly active: boolean;
     readonly error: string | null;
   }>;
+  getKeepMacAwake: () => Promise<boolean>;
+  setKeepMacAwake: (enabled: boolean) => Promise<boolean>;
+  getRemoteAccessEnabled: () => Promise<boolean>;
+  setRemoteAccessEnabled: (enabled: boolean) => Promise<boolean>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   onCodexMicroCommand: (listener: (command: DesktopCodexMicroCommand) => void) => () => void;
   getCodexMicroTransportState?: () => Promise<DesktopCodexMicroTransportState>;

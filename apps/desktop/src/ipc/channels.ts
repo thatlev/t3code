@@ -4,12 +4,24 @@ export const SET_THEME_CHANNEL = "desktop:set-theme";
 export const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 export const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
 export const SET_MAC_DICTATION_CHANNEL = "desktop:set-mac-dictation";
+export const GET_KEEP_MAC_AWAKE_CHANNEL = "desktop:get-keep-mac-awake";
+export const SET_KEEP_MAC_AWAKE_CHANNEL = "desktop:set-keep-mac-awake";
+export const GET_REMOTE_ACCESS_ENABLED_CHANNEL = "desktop:get-remote-access-enabled";
+export const SET_REMOTE_ACCESS_ENABLED_CHANNEL = "desktop:set-remote-access-enabled";
 export const MENU_ACTION_CHANNEL = "desktop:menu-action";
 export const CODEX_MICRO_COMMAND_CHANNEL = "desktop:codex-micro-command";
 export const CODEX_MICRO_TRANSPORT_GET_STATE_CHANNEL = "desktop:codex-micro-transport-get-state";
 export const CODEX_MICRO_TRANSPORT_SEND_REPORT_CHANNEL =
   "desktop:codex-micro-transport-send-report";
 export const CODEX_MICRO_TRANSPORT_EVENT_CHANNEL = "desktop:codex-micro-transport-event";
+export const OPEN_THREAD_WINDOW_CHANNEL = "desktop:open-thread-window";
+export const CLAIM_THREAD_WINDOW_CHANNEL = "desktop:claim-thread-window";
+export const THREAD_WINDOW_SCOPE_CHANNEL = "desktop:thread-window-scope";
+export const FOCUS_THREAD_WINDOW_CHANNEL = "desktop:focus-thread-window";
+export const THREAD_WINDOW_FOCUS_CHANNEL = "desktop:thread-window-focus";
+// Renderer argv flag carrying a torn-off window's opening chat scope, so the
+// preload can hand it to the app before the first paint.
+export const WINDOW_SCOPE_ARGUMENT_PREFIX = "--t3-window-scope=";
 export const GET_WINDOW_FULLSCREEN_STATE_CHANNEL = "desktop:get-window-fullscreen-state";
 export const WINDOW_FULLSCREEN_STATE_CHANNEL = "desktop:window-fullscreen-state";
 export const UPDATE_STATE_CHANNEL = "desktop:update-state";

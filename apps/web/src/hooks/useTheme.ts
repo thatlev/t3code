@@ -56,12 +56,15 @@ let lastSnapshot: ThemeSnapshot | null = null;
 let lastDesktopTheme: Theme | null = null;
 let lastAppliedTheme: ThemeSnapshot | null = null;
 let themeStorageReadFailure: ThemeStorageError | null = null;
+let desktopSystemDark: boolean | null = null;
+let desktopSystemSyncRetryCount = 0;
 
 function emitChange() {
   for (const listener of listeners) listener();
 }
 
 function getSystemDark() {
+  if (desktopSystemDark !== null) return desktopSystemDark;
   return (
     typeof window !== "undefined" &&
     typeof window.matchMedia === "function" &&
@@ -175,6 +178,7 @@ export function syncBrowserChromeTheme() {
 
 function applyTheme(theme: Theme, suppressTransitions = false) {
   if (typeof document === "undefined" || typeof window === "undefined") return;
+  if (theme !== "system") desktopSystemDark = null;
   const systemDark = theme === "system" ? getSystemDark() : false;
   if (lastAppliedTheme?.theme === theme && lastAppliedTheme.systemDark === systemDark) {
     syncDesktopTheme(theme);
@@ -202,12 +206,21 @@ function applyTheme(theme: Theme, suppressTransitions = false) {
 export async function syncDesktopThemePreference(
   bridge: DesktopThemeBridge,
   theme: Theme,
-): Promise<void> {
+): Promise<boolean> {
   try {
-    await bridge.setTheme(theme);
+    return await bridge.setTheme(theme);
   } catch (cause) {
     throw new DesktopThemeSyncError({ theme, cause });
   }
+}
+
+function applyDesktopSystemTheme(nativeSystemDark: boolean) {
+  if (getStored() !== "system") return;
+  desktopSystemDark = nativeSystemDark;
+  document.documentElement.classList.toggle("dark", nativeSystemDark);
+  lastAppliedTheme = { theme: "system", systemDark: nativeSystemDark };
+  syncBrowserChromeTheme();
+  emitChange();
 }
 
 export function syncDesktopTheme(theme: Theme) {
@@ -218,18 +231,33 @@ export function syncDesktopTheme(theme: Theme) {
   }
 
   lastDesktopTheme = theme;
-  void syncDesktopThemePreference(bridge, theme).catch((cause: unknown) => {
-    const error = isDesktopThemeSyncError(cause)
-      ? cause
-      : new DesktopThemeSyncError({ theme, cause });
-    console.error(error.message, {
-      theme: error.theme,
-      ...safeErrorLogAttributes(error),
-    });
-    if (lastDesktopTheme === theme) {
-      lastDesktopTheme = null;
-    }
-  });
+  void syncDesktopThemePreference(bridge, theme).then(
+    (nativeSystemDark) => {
+      if (theme !== "system" || lastDesktopTheme !== theme) return;
+      desktopSystemSyncRetryCount = 0;
+      applyDesktopSystemTheme(nativeSystemDark);
+      window.setTimeout(() => applyDesktopSystemTheme(nativeSystemDark), 250);
+      window.setTimeout(() => applyDesktopSystemTheme(nativeSystemDark), 1_000);
+    },
+    (cause: unknown) => {
+      const error = isDesktopThemeSyncError(cause)
+        ? cause
+        : new DesktopThemeSyncError({ theme, cause });
+      console.error(error.message, {
+        theme: error.theme,
+        ...safeErrorLogAttributes(error),
+      });
+      if (lastDesktopTheme === theme) {
+        lastDesktopTheme = null;
+      }
+      if (theme === "system" && desktopSystemSyncRetryCount < 20) {
+        desktopSystemSyncRetryCount += 1;
+        window.setTimeout(() => {
+          if (getStored() === "system") syncDesktopTheme("system");
+        }, 100);
+      }
+    },
+  );
 }
 
 // Apply immediately on module load to prevent flash
@@ -260,7 +288,8 @@ function subscribe(listener: () => void): () => void {
 
   // Listen for system preference changes
   const mq = typeof window.matchMedia === "function" ? window.matchMedia(MEDIA_QUERY) : null;
-  const handleChange = () => {
+  const handleChange = (event: MediaQueryListEvent) => {
+    desktopSystemDark = event.matches;
     if (getStored() === "system") applyTheme("system", true);
     emitChange();
   };

@@ -45,6 +45,7 @@ import * as DesktopLocalEnvironmentAuth from "./backend/DesktopLocalEnvironmentA
 import * as DesktopNetworkInterfaces from "./backend/DesktopNetworkInterfaces.ts";
 import * as DesktopEnvironment from "./app/DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./app/DesktopLifecycle.ts";
+import * as DesktopKeepAwake from "./app/DesktopKeepAwake.ts";
 import * as DesktopShutdown from "./app/DesktopShutdown.ts";
 import * as DesktopObservability from "./app/DesktopObservability.ts";
 import * as DesktopServerExposure from "./backend/DesktopServerExposure.ts";
@@ -58,6 +59,7 @@ import * as DesktopState from "./app/DesktopState.ts";
 import * as DesktopUpdates from "./updates/DesktopUpdates.ts";
 import * as BrowserSession from "./preview/BrowserSession.ts";
 import * as PreviewManager from "./preview/Manager.ts";
+import * as DesktopThreadWindows from "./window/DesktopThreadWindows.ts";
 import * as DesktopWindow from "./window/DesktopWindow.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
@@ -65,17 +67,44 @@ import {
   CodexMicroCompanionTransport,
   type CodexMicroCompanionTransportState,
 } from "./codexMicro/CodexMicroCompanionTransport.ts";
+import {
+  buildMacDictationScript,
+  MAC_DICTATION_ACCESSIBILITY_ERROR,
+  parseMacDictationResult,
+} from "./dictation/MacDictation.ts";
 import * as IpcChannels from "./ipc/channels.ts";
 
 const CODEX_MICRO_COMMAND_CHANNEL = "desktop:codex-micro-command";
 const SET_MAC_DICTATION_CHANNEL = "desktop:set-mac-dictation";
 
+/**
+ * The one window that speaks to the Codex Micro remote.
+ *
+ * The pad is a single physical device with a single board, so exactly one
+ * renderer may drive it. Fanning its input out to every window made each of
+ * them act on the same key press — they all navigated to the pinned chat, and
+ * since showing a chat is what claims it, torn-off chats got yanked back into
+ * whichever window answered last. Its board is published the same way: two
+ * authors would fight over the pins and lighting.
+ */
+function codexMicroHostWindow(): Electron.BrowserWindow | null {
+  const catchAll = DesktopThreadWindows.desktopThreadWindows.catchAllWindow();
+  if (catchAll !== null) return catchAll;
+  // Every window is a torn-off one (the main window was closed): fall back to
+  // the window the user is in so the pad still does something.
+  const fallback =
+    Electron.BrowserWindow.getFocusedWindow() ?? Electron.BrowserWindow.getAllWindows()[0];
+  return fallback !== undefined && !fallback.isDestroyed() ? fallback : null;
+}
+
+function isCodexMicroHost(webContentsId: number): boolean {
+  return codexMicroHostWindow()?.webContents.id === webContentsId;
+}
+
 function broadcastCodexMicroTransportEvent(value: unknown): void {
-  for (const window of Electron.BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) {
-      window.webContents.send(IpcChannels.CODEX_MICRO_TRANSPORT_EVENT_CHANNEL, value);
-    }
-  }
+  const host = codexMicroHostWindow();
+  if (host === null) return;
+  host.webContents.send(IpcChannels.CODEX_MICRO_TRANSPORT_EVENT_CHANNEL, value);
 }
 
 let lastCompanionLaunchAttemptAt = 0;
@@ -103,14 +132,19 @@ const codexMicroCompanionTransport = new CodexMicroCompanionTransport({
 });
 
 Electron.ipcMain.removeHandler(IpcChannels.CODEX_MICRO_TRANSPORT_GET_STATE_CHANNEL);
-Electron.ipcMain.handle(IpcChannels.CODEX_MICRO_TRANSPORT_GET_STATE_CHANNEL, () =>
-  codexMicroCompanionTransport.getState(),
+Electron.ipcMain.handle(IpcChannels.CODEX_MICRO_TRANSPORT_GET_STATE_CHANNEL, (event) =>
+  // A non-host window is told the pad is absent, so it never starts writing to
+  // a device another window already owns.
+  isCodexMicroHost(event.sender.id)
+    ? codexMicroCompanionTransport.getState()
+    : { revision: 0, companionConnected: false, phoneConnected: false, error: null },
 );
 Electron.ipcMain.removeAllListeners(IpcChannels.CODEX_MICRO_TRANSPORT_SEND_REPORT_CHANNEL);
 Electron.ipcMain.on(
   IpcChannels.CODEX_MICRO_TRANSPORT_SEND_REPORT_CHANNEL,
-  (_event, value: unknown) => {
+  (event, value: unknown) => {
     if (
+      !isCodexMicroHost(event.sender.id) ||
       !Array.isArray(value) ||
       (value.length !== 63 && value.length !== 64) ||
       value.some(
@@ -131,15 +165,11 @@ let macDictationQueue = Promise.resolve({
   error: null as string | null,
 });
 
-function appleScriptString(value: string): string {
-  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
-}
-
-function runAppleScript(source: string): Promise<void> {
+function runAppleScript(source: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile("/usr/bin/osascript", ["-e", source], (error) => {
+    execFile("/usr/bin/osascript", ["-e", source], (error, stdout) => {
       if (error) reject(error);
-      else resolve();
+      else resolve(stdout);
     });
   });
 }
@@ -151,7 +181,9 @@ Electron.ipcMain.handle(SET_MAC_DICTATION_CHANNEL, (_event, requested: unknown) 
     if (process.platform !== "darwin") {
       return { active: false, error: "macOS Dictation is only available on macOS." };
     }
-    if (active === macDictationActive) return { active, error: null };
+    if (!Electron.systemPreferences.isTrustedAccessibilityClient(true)) {
+      return { active: macDictationActive, error: MAC_DICTATION_ACCESSIBILITY_ERROR };
+    }
 
     const windows = Electron.BrowserWindow.getAllWindows();
     for (const window of windows) {
@@ -160,27 +192,15 @@ Electron.ipcMain.handle(SET_MAC_DICTATION_CHANNEL, (_event, requested: unknown) 
     }
     Electron.app.focus({ steal: true });
 
-    const appName = Electron.app.name;
-    const script = `
-tell application "System Events"
-  tell process ${appleScriptString(appName)}
-    set frontmost to true
-    tell menu "Edit" of menu bar item "Edit" of menu bar 1
-      set dictationItems to every menu item whose name contains "Dictation"
-      if (count of dictationItems) is 0 then error "T3 Code has no Dictation menu item"
-      click item 1 of dictationItems
-    end tell
-  end tell
-end tell`;
     try {
-      await runAppleScript(script);
-      macDictationActive = active;
-      return { active, error: null };
+      const result = await runAppleScript(buildMacDictationScript(Electron.app.name, active));
+      macDictationActive = parseMacDictationResult(result);
+      return { active: macDictationActive, error: null };
     } catch {
       return {
         active: macDictationActive,
         error:
-          "Could not toggle macOS Dictation. Enable Dictation and allow T3 Code to control System Events in macOS Privacy & Security.",
+          "Could not toggle macOS Dictation. Enable Dictation in Keyboard settings and allow T3 Code in Privacy & Security > Accessibility.",
       };
     }
   });
@@ -200,7 +220,7 @@ function parseCodexMicroUrl(value: string) {
     const kind = url.searchParams.get("kind");
     if (kind === "effort") {
       return {
-        kind,
+        kind: "effort" as const,
         direction: url.searchParams.get("direction") === "-1" ? (-1 as const) : (1 as const),
       };
     }
@@ -208,7 +228,7 @@ function parseCodexMicroUrl(value: string) {
       const environmentId = url.searchParams.get("environmentId");
       const threadId = url.searchParams.get("threadId");
       return {
-        kind,
+        kind: "focus" as const,
         ...(environmentId ? { environmentId } : {}),
         ...(threadId ? { threadId } : {}),
       };
@@ -227,7 +247,7 @@ function parseCodexMicroUrl(value: string) {
         action === "sideChat" ||
         action === "settings"
       ) {
-        return { kind, action };
+        return { kind: "action" as const, action };
       }
     }
   } catch {
@@ -238,6 +258,32 @@ function parseCodexMicroUrl(value: string) {
 
 const pendingCodexMicroCommands: Array<NonNullable<ReturnType<typeof parseCodexMicroUrl>>> = [];
 
+// Remote commands act on exactly one window. Broadcasting them made every open
+// window jump to the same chat; a "focus" goes to the window that actually
+// holds that chat, and everything else goes to the window the user is in.
+function resolveCodexMicroTargetWindow(
+  command: NonNullable<ReturnType<typeof parseCodexMicroUrl>>,
+  windows: readonly Electron.BrowserWindow[],
+): Electron.BrowserWindow | undefined {
+  if (command.kind === "focus" && command.environmentId && command.threadId) {
+    const owner = DesktopThreadWindows.desktopThreadWindows.windowForThread(
+      DesktopThreadWindows.desktopThreadKey({
+        environmentId: command.environmentId,
+        threadId: command.threadId,
+      }),
+    );
+    if (owner !== null) return owner;
+    // Unclaimed chats live in the catch-all window, whatever it is called.
+    const catchAll = windows.find(
+      (window) =>
+        !window.isDestroyed() &&
+        !DesktopThreadWindows.desktopThreadWindows.isScopedWindow(window.webContents.id),
+    );
+    if (catchAll !== undefined) return catchAll;
+  }
+  return Electron.BrowserWindow.getFocusedWindow() ?? windows[0];
+}
+
 function dispatchCodexMicroUrl(value: string) {
   const command = parseCodexMicroUrl(value);
   if (command === null) return;
@@ -246,12 +292,12 @@ function dispatchCodexMicroUrl(value: string) {
     pendingCodexMicroCommands.push(command);
     return;
   }
+  const target = resolveCodexMicroTargetWindow(command, windows);
+  if (target === undefined || target.isDestroyed()) return;
   Electron.app.focus({ steal: true });
-  for (const window of windows) {
-    window.show();
-    window.focus();
-    window.webContents.send(CODEX_MICRO_COMMAND_CHANNEL, command);
-  }
+  target.show();
+  target.focus();
+  target.webContents.send(CODEX_MICRO_COMMAND_CHANNEL, command);
 }
 
 Electron.app.on("open-url", (event, url) => {
@@ -366,6 +412,7 @@ const desktopFoundationLayer = Layer.mergeAll(
   DesktopConnectionCatalogStore.layer.pipe(Layer.provideMerge(DesktopSavedEnvironments.layer)),
   DesktopAssets.layer,
   DesktopObservability.layer,
+  DesktopKeepAwake.layer,
 ).pipe(Layer.provideMerge(desktopEnvironmentLayer));
 
 const desktopSshLayer = desktopSshEnvironmentLayer.pipe(

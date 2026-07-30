@@ -1,5 +1,10 @@
 import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
-import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
+import {
+  scopedProjectKey,
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   Outlet,
@@ -33,6 +38,7 @@ import {
   derivePhysicalProjectKeyFromPath,
   selectProjectGroupingSettings,
 } from "../logicalProject";
+import { focusThreadInOwningWindow } from "../threadWindowScope";
 import { useUiStateStore } from "../uiStateStore";
 import { syncBrowserChromeTheme } from "../hooks/useTheme";
 import { configureClientTracing } from "../observability/clientTracing";
@@ -323,6 +329,18 @@ function EventRouter() {
         return;
       }
       if (handledBootstrapThreadIdRef.current === payload.bootstrapThreadId) {
+        return;
+      }
+      // If the bootstrap chat has been torn off into its own window, show it
+      // there rather than pulling it back into this one.
+      if (
+        await focusThreadInOwningWindow(
+          scopedThreadKey(
+            scopeThreadRef(payload.environment.environmentId, payload.bootstrapThreadId),
+          ),
+        )
+      ) {
+        handledBootstrapThreadIdRef.current = payload.bootstrapThreadId;
         return;
       }
       await navigate({

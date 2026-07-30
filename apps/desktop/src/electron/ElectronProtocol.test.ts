@@ -23,6 +23,17 @@ describe("ElectronProtocol", () => {
     unhandleMock.mockReset();
   });
 
+  it("builds a hash-history route for a thread window", () => {
+    assert.strictEqual(
+      ElectronProtocol.getThreadRouteHash({ environmentId: "local", threadId: "thr_123" }),
+      "#/local/thr_123",
+    );
+    assert.strictEqual(
+      ElectronProtocol.getThreadRouteHash({ environmentId: "ssh:box/1", threadId: "a b" }),
+      "#/ssh%3Abox%2F1/a%20b",
+    );
+  });
+
   it.effect("proxies the stable renderer origin to the current app server", () =>
     Effect.gen(function* () {
       let handler: ((request: Request) => Promise<Response>) | undefined;

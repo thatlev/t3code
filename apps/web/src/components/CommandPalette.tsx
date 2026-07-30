@@ -57,7 +57,7 @@ import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
-import { useProjects, useThreadShells } from "../state/entities";
+import { useProjects, useVisibleThreadShells } from "../state/entities";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
   appendBrowsePathSegment,
@@ -496,7 +496,7 @@ function OpenCommandPaletteDialog(props: {
     useHandleNewThread();
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
-  const threads = useThreadShells();
+  const threads = useVisibleThreadShells();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const providers = useAtomValue(primaryServerProvidersAtom);
   const [viewStack, setViewStack] = useState<CommandPaletteView[]>([]);

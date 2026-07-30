@@ -244,6 +244,8 @@ function makeTestLayer(input: {
     setServerExposureMode: () => Effect.die("unexpected server exposure update"),
     setTailscaleServe: () => Effect.die("unexpected Tailscale Serve update"),
     setUpdateChannel: () => Effect.die("unexpected update channel change"),
+    setKeepMacAwake: () => Effect.die("unexpected keep awake change"),
+    setRemoteAccessEnabled: () => Effect.die("unexpected remote access change"),
     setWslBackendEnabled: () => Effect.die("unexpected WSL backend toggle"),
     setWslDistro: () => Effect.die("unexpected WSL distro change"),
     setWslOnly: () => Effect.die("unexpected WSL-only toggle"),
@@ -410,6 +412,71 @@ describe("DesktopWindow", () => {
     assert.deepEqual(
       DesktopWindow.resolveInitialMainWindowBounds(persistedBounds, [displays[0]!]),
       DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE,
+    );
+  });
+
+  it("places a torn-off window under the drop point, fully on that display", () => {
+    const workArea = { x: 1920, y: 0, width: 2560, height: 1440 };
+
+    assert.deepEqual(
+      DesktopWindow.resolveDetachedWindowBounds({
+        anchor: { x: 3000, y: 400 },
+        size: { width: 1100, height: 780 },
+        workArea,
+      }),
+      { x: 2780, y: 380, width: 1100, height: 780 },
+    );
+
+    // Dropped near the display's edges: the window slides back inside rather
+    // than opening half off-screen.
+    assert.deepEqual(
+      DesktopWindow.resolveDetachedWindowBounds({
+        anchor: { x: 1930, y: 10 },
+        size: { width: 1100, height: 780 },
+        workArea,
+      }),
+      { x: 1920, y: 0, width: 1100, height: 780 },
+    );
+    assert.deepEqual(
+      DesktopWindow.resolveDetachedWindowBounds({
+        anchor: { x: 4470, y: 1430 },
+        size: { width: 1100, height: 780 },
+        workArea,
+      }),
+      { x: 3380, y: 660, width: 1100, height: 780 },
+    );
+  });
+
+  it("keeps a torn-off window within the minimum size and the display", () => {
+    assert.deepEqual(
+      DesktopWindow.resolveDetachedWindowBounds({
+        anchor: null,
+        size: { width: 400, height: 300 },
+        workArea: { x: 0, y: 0, width: 1920, height: 1080 },
+      }),
+      { x: 540, y: 230, width: 840, height: 620 },
+    );
+
+    // A source window larger than the target display (dragged from a 4K screen
+    // onto a laptop panel) is trimmed to fit.
+    assert.deepEqual(
+      DesktopWindow.resolveDetachedWindowBounds({
+        anchor: { x: 500, y: 500 },
+        size: { width: 3000, height: 2000 },
+        workArea: { x: 0, y: 0, width: 1440, height: 900 },
+      }),
+      { x: 0, y: 0, width: 1440, height: 900 },
+    );
+  });
+
+  it("honors the drop point unclamped when the display layout is unreadable", () => {
+    assert.deepEqual(
+      DesktopWindow.resolveDetachedWindowBounds({
+        anchor: { x: 900, y: 300 },
+        size: { width: 1100, height: 780 },
+        workArea: null,
+      }),
+      { x: 680, y: 280, width: 1100, height: 780 },
     );
   });
 

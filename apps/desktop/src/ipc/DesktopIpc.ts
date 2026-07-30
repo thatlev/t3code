@@ -4,10 +4,29 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
-export interface DesktopIpcInvokeEvent {}
+// Electron reports the calling renderer on every IPC event. Window-scoped
+// methods need it to tell one app window from another; everything else ignores
+// it. Optional so test doubles stay minimal.
+export interface DesktopIpcEventSender {
+  readonly id: number;
+}
+
+export interface DesktopIpcInvokeEvent {
+  readonly sender?: DesktopIpcEventSender;
+}
 
 export interface DesktopIpcSyncEvent {
   returnValue: unknown;
+  readonly sender?: DesktopIpcEventSender;
+}
+
+/** The window that made an IPC call, as seen by a method handler. */
+export interface DesktopIpcCaller {
+  readonly webContentsId: number | null;
+}
+
+function resolveCaller(event: { readonly sender?: DesktopIpcEventSender }): DesktopIpcCaller {
+  return { webContentsId: event.sender?.id ?? null };
 }
 
 export type DesktopIpcHandleListener = (
@@ -57,15 +76,19 @@ export const DesktopIpcError = Schema.Union([
 export type DesktopIpcError = typeof DesktopIpcError.Type;
 export const isDesktopIpcError = Schema.is(DesktopIpcError);
 
+// `caller` is optional so a direct call (a test invoking the handler) can omit
+// it; the registered listeners always supply it.
 export interface DesktopIpcMethod<E, R> {
   readonly channel: string;
-  readonly handler: (raw: unknown) => Effect.Effect<unknown, E, R>;
+  readonly handler: (raw: unknown, caller?: DesktopIpcCaller) => Effect.Effect<unknown, E, R>;
 }
 
 export interface DesktopSyncIpcMethod<E, R> {
   readonly channel: string;
-  readonly handler: () => Effect.Effect<unknown, E, R>;
+  readonly handler: (caller?: DesktopIpcCaller) => Effect.Effect<unknown, E, R>;
 }
+
+const UNKNOWN_CALLER: DesktopIpcCaller = { webContentsId: null };
 
 export class DesktopIpc extends Context.Service<
   DesktopIpc,
@@ -93,11 +116,11 @@ export const make = (ipcMain: DesktopIpcMain): DesktopIpc["Service"] =>
         Effect.try({
           try: () => {
             ipcMain.removeHandler(channel);
-            ipcMain.handle(channel, (_event, raw) =>
+            ipcMain.handle(channel, (event, raw) =>
               runPromise(
                 Effect.gen(function* () {
                   yield* Effect.annotateCurrentSpan({ channel });
-                  return yield* handler(raw);
+                  return yield* handler(raw, resolveCaller(event));
                 }).pipe(Effect.annotateLogs({ channel }), Effect.withSpan("desktop.ipc.invoke")),
               ),
             );
@@ -130,7 +153,7 @@ export const make = (ipcMain: DesktopIpcMain): DesktopIpc["Service"] =>
               event.returnValue = runSync(
                 Effect.gen(function* () {
                   yield* Effect.annotateCurrentSpan({ channel });
-                  return yield* handler();
+                  return yield* handler(resolveCaller(event));
                 }).pipe(
                   Effect.annotateLogs({ channel }),
                   Effect.withSpan("desktop.ipc.invokeSync"),
@@ -182,7 +205,9 @@ export interface DesktopIpcMethodRegistration<
     ResultDecodingServices,
     ResultEncodingServices
   >;
-  readonly handler: (input: Payload) => Effect.Effect<Result, E, R>;
+  // `caller` identifies the window that invoked the method; handlers that are
+  // not window-scoped simply declare one parameter and ignore it.
+  readonly handler: (input: Payload, caller: DesktopIpcCaller) => Effect.Effect<Result, E, R>;
 }
 
 export const makeIpcMethod = <
@@ -218,9 +243,9 @@ export const makeIpcMethod = <
 
   return {
     channel: method.channel,
-    handler: (raw) =>
+    handler: (raw, caller) =>
       decode(raw).pipe(
-        Effect.flatMap(method.handler),
+        Effect.flatMap((input) => method.handler(input, caller ?? UNKNOWN_CALLER)),
         Effect.flatMap(encode),
         Effect.withSpan("desktop.ipc.method", { attributes: { channel: method.channel } }),
       ),
@@ -242,7 +267,7 @@ export interface DesktopSyncIpcMethodRegistration<
     ResultDecodingServices,
     ResultEncodingServices
   >;
-  readonly handler: () => Effect.Effect<Result, E, R>;
+  readonly handler: (caller: DesktopIpcCaller) => Effect.Effect<Result, E, R>;
 }
 
 export const makeSyncIpcMethod = <
@@ -266,9 +291,9 @@ export const makeSyncIpcMethod = <
 
   return {
     channel: method.channel,
-    handler: () =>
+    handler: (caller) =>
       method
-        .handler()
+        .handler(caller ?? UNKNOWN_CALLER)
         .pipe(
           Effect.flatMap(encode),
           Effect.withSpan("desktop.ipc.method", { attributes: { channel: method.channel } }),

@@ -18,11 +18,18 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { MENU_ACTION_CHANNEL, WINDOW_FULLSCREEN_STATE_CHANNEL } from "../ipc/channels.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import * as DesktopThreadWindows from "./DesktopThreadWindows.ts";
 
 const TITLEBAR_HEIGHT = 40;
 const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linux
 const TITLEBAR_LIGHT_SYMBOL_COLOR = "#1f2937";
 const TITLEBAR_DARK_SYMBOL_COLOR = "#f8fafc";
+const MIN_WINDOW_WIDTH = 840;
+const MIN_WINDOW_HEIGHT = 620;
+// Where a torn-off window sits relative to the point the user released the
+// drag: the cursor should land on the new window's title bar, the way a
+// dragged-out browser tab does, rather than dead centre of the content.
+const DETACHED_WINDOW_ANCHOR_OFFSET = { x: -220, y: -20 } as const;
 const MAIN_WINDOW_BOUNDS_PERSIST_DEBOUNCE_MS = 500;
 const DEVELOPMENT_LOAD_RETRY_DELAYS_MS = [100, 250, 500, 1_000, 2_000] as const;
 const DEVELOPMENT_RETRYABLE_LOAD_ERROR_CODES = new Set([
@@ -54,10 +61,30 @@ export type DesktopWindowError =
   | ElectronWindow.ElectronWindowCreateError
   | PreviewManager.PreviewManagerError;
 
+export interface DesktopDetachedWindowRequest {
+  // Renderer route to open in the new window, as a hash fragment including the
+  // leading "#" (the renderer uses hash history under Electron).
+  readonly routeHash: string;
+  // The chat this window takes ownership of. It leaves the window it was torn
+  // off, so the two windows show disjoint chat lists.
+  readonly threadKey: string;
+  // Screen point the drag was released at, used to place the window on the
+  // display the user dropped it onto. Null centres it on the primary display.
+  readonly anchor: { readonly x: number; readonly y: number } | null;
+  // Preferred size; falls back to the size of the window it was torn off.
+  readonly size: { readonly width: number; readonly height: number } | null;
+}
+
 export class DesktopWindow extends Context.Service<
   DesktopWindow,
   {
     readonly createMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
+    // Opens an additional, independent app window on a specific route. Unlike
+    // the main window it owns no shared state: no persisted bounds, no preview
+    // ownership, and closing it never ends the session.
+    readonly openDetachedWindow: (
+      request: DesktopDetachedWindowRequest,
+    ) => Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
     readonly ensureMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
     readonly revealOrCreateMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
     readonly activate: Effect.Effect<void, DesktopWindowError>;
@@ -140,6 +167,56 @@ export function resolveInitialMainWindowBounds(
     return persistedBounds;
   }
   return DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE;
+}
+
+function clampToRange(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+/**
+ * Places a torn-off window at the point the drag was released, keeping it
+ * fully on the display it was dropped onto. A null work area means the display
+ * layout could not be read, in which case the anchor is honoured unclamped.
+ */
+export function resolveDetachedWindowBounds(input: {
+  readonly anchor: { readonly x: number; readonly y: number } | null;
+  readonly size: { readonly width: number; readonly height: number };
+  readonly workArea: DisplayBounds | null;
+}): DesktopAppSettings.DesktopWindowBounds {
+  const { anchor, size, workArea } = input;
+  const width = Math.round(
+    workArea === null
+      ? Math.max(size.width, MIN_WINDOW_WIDTH)
+      : clampToRange(size.width, MIN_WINDOW_WIDTH, Math.max(workArea.width, MIN_WINDOW_WIDTH)),
+  );
+  const height = Math.round(
+    workArea === null
+      ? Math.max(size.height, MIN_WINDOW_HEIGHT)
+      : clampToRange(size.height, MIN_WINDOW_HEIGHT, Math.max(workArea.height, MIN_WINDOW_HEIGHT)),
+  );
+
+  if (anchor === null) {
+    return workArea === null
+      ? { x: 0, y: 0, width, height }
+      : {
+          x: Math.round(workArea.x + (workArea.width - width) / 2),
+          y: Math.round(workArea.y + (workArea.height - height) / 2),
+          width,
+          height,
+        };
+  }
+
+  const x = anchor.x + DETACHED_WINDOW_ANCHOR_OFFSET.x;
+  const y = anchor.y + DETACHED_WINDOW_ANCHOR_OFFSET.y;
+  if (workArea === null) {
+    return { x: Math.round(x), y: Math.round(y), width, height };
+  }
+  return {
+    x: Math.round(clampToRange(x, workArea.x, workArea.x + Math.max(workArea.width - width, 0))),
+    y: Math.round(clampToRange(y, workArea.y, workArea.y + Math.max(workArea.height - height, 0))),
+    width,
+    height,
+  };
 }
 
 // A self-contained "Connecting to WSL" splash, shown immediately in wsl-only
@@ -301,17 +378,33 @@ export const make = Effect.gen(function* () {
   const currentMainWindow = electronWindow.currentMainOrFirst.pipe(Effect.flatMap(withoutSplash));
   const focusedMainWindow = electronWindow.focusedMainOrFirst.pipe(Effect.flatMap(withoutSplash));
 
-  const createWindow = Effect.fn("desktop.window.createWindow")(function* (): Effect.fn.Return<
-    Electron.BrowserWindow,
-    DesktopWindowError
-  > {
+  const createWindow = Effect.fn("desktop.window.createWindow")(function* (options: {
+    // The main window owns everything that can only exist once: persisted
+    // bounds, preview ownership, the menu's target of last resort. Detached
+    // windows are plain additional views of the same app.
+    readonly role: "main" | "detached";
+    // Hash-history route to open in, including the leading "#". Null loads the
+    // app's default route.
+    readonly routeHash: string | null;
+    // Explicit placement, bypassing the persisted main-window bounds.
+    readonly bounds: DesktopAppSettings.DesktopWindowBounds | null;
+    // The chats this window owns, handed to the renderer through argv so it
+    // knows its scope on the very first paint instead of briefly showing every
+    // chat and then filtering.
+    readonly threadKeys: readonly string[] | null;
+  }): Effect.fn.Return<Electron.BrowserWindow, DesktopWindowError> {
+    const isMainWindow = options.role === "main";
     yield* previewManager.getBrowserSession();
     const applicationUrl = getDesktopUrl(environment.isDevelopment);
+    // Same document, different entry route. The hash never reaches the
+    // protocol handler, so origin checks keep comparing against applicationUrl.
+    const initialUrl =
+      options.routeHash === null ? applicationUrl : `${applicationUrl}${options.routeHash}`;
     const iconPaths = yield* assets.iconPaths;
     const iconOption = getIconOption(iconPaths, environment.platform);
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
     const persistedSettings = yield* desktopSettings.get;
-    const persistedBounds = persistedSettings.mainWindowBounds;
+    const persistedBounds = isMainWindow ? persistedSettings.mainWindowBounds : null;
     const displayBoundsResult = yield* Effect.sync(() => {
       try {
         return {
@@ -328,15 +421,19 @@ export const make = Effect.gen(function* () {
         : yield* logWindowWarning("failed to read connected displays; using defaults", {
             cause: displayBoundsResult.cause,
           }).pipe(Effect.as<readonly Electron.Rectangle[]>([]));
-    const initialBounds = resolveInitialMainWindowBounds(persistedBounds, displayBounds);
-    const restoredPersistedBounds = persistedBounds !== null && initialBounds === persistedBounds;
-    if (persistedBounds !== null && initialBounds === DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE) {
+    const resolvedBounds = resolveInitialMainWindowBounds(persistedBounds, displayBounds);
+    const restoredPersistedBounds = persistedBounds !== null && resolvedBounds === persistedBounds;
+    if (
+      persistedBounds !== null &&
+      resolvedBounds === DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE
+    ) {
       yield* logWindowWarning("saved main window bounds could not be restored; using defaults");
     }
+    const initialBounds = options.bounds ?? resolvedBounds;
     const window = yield* electronWindow.create({
       ...initialBounds,
-      minWidth: 840,
-      minHeight: 620,
+      minWidth: MIN_WINDOW_WIDTH,
+      minHeight: MIN_WINDOW_HEIGHT,
       show: false,
       autoHideMenuBar: true,
       ...(environment.platform === "darwin" ? { disableAutoHideCursor: true } : {}),
@@ -350,15 +447,38 @@ export const make = Effect.gen(function* () {
         nodeIntegration: false,
         sandbox: true,
         webviewTag: true,
+        ...(options.threadKeys === null
+          ? {}
+          : {
+              additionalArguments: [
+                DesktopThreadWindows.encodeWindowScopeArgument({
+                  kind: "only",
+                  threadKeys: options.threadKeys,
+                }),
+              ],
+            }),
       },
     });
+
+    if (options.threadKeys !== null) {
+      for (const threadKey of options.threadKeys) {
+        DesktopThreadWindows.desktopThreadWindows.track({
+          webContentsId: window.webContents.id,
+          threadKey,
+        });
+      }
+    }
+    const windowWebContentsId = window.webContents.id;
 
     if (environment.platform === "darwin") {
       window.setAutoHideCursor(false);
     }
     let boundsPersistFiber: Fiber.Fiber<void, never> | undefined;
     let pendingBoundsPersistFiber: Fiber.Fiber<void, never> | undefined;
-    let boundsPersistenceEnabled = persistedBounds === null || restoredPersistedBounds;
+    // Only the main window's geometry is remembered across launches; a torn-off
+    // window is placed where it was dropped and forgotten when it closes.
+    let boundsPersistenceEnabled =
+      isMainWindow && (persistedBounds === null || restoredPersistedBounds);
     const readPersistableBounds = (): DesktopAppSettings.DesktopWindowBounds | null => {
       if (window.isDestroyed()) {
         return null;
@@ -441,9 +561,13 @@ export const make = Effect.gen(function* () {
         fiber === undefined ? Effect.void : Fiber.join(fiber).pipe(Effect.asVoid),
       ),
     );
-    flushMainWindowBounds = flushBoundsPersist;
+    if (isMainWindow) {
+      flushMainWindowBounds = flushBoundsPersist;
+      // The preview subsystem hosts its webviews in exactly one window; a
+      // detached window must not steal that ownership from the main one.
+      yield* previewManager.setMainWindow(window);
+    }
 
-    yield* previewManager.setMainWindow(window);
     let bluetoothSelectionFiber: Fiber.Fiber<void, never> | undefined;
     window.webContents.on("select-bluetooth-device", (event, devices, callback) => {
       event.preventDefault();
@@ -558,10 +682,12 @@ export const make = Effect.gen(function* () {
       event.preventDefault();
       window.setTitle(environment.displayName);
     });
-    window.on("resize", scheduleBoundsPersist);
-    window.on("move", scheduleBoundsPersist);
-    window.on("maximize", scheduleBoundsPersist);
-    window.on("unmaximize", scheduleBoundsPersist);
+    if (isMainWindow) {
+      window.on("resize", scheduleBoundsPersist);
+      window.on("move", scheduleBoundsPersist);
+      window.on("maximize", scheduleBoundsPersist);
+      window.on("unmaximize", scheduleBoundsPersist);
+    }
     window.on("close", () => {
       if (bluetoothSelectionFiber !== undefined) {
         const fiber = bluetoothSelectionFiber;
@@ -594,7 +720,7 @@ export const make = Effect.gen(function* () {
       if (window.isDestroyed()) {
         return;
       }
-      void window.loadURL(applicationUrl).catch(() => undefined);
+      void window.loadURL(initialUrl).catch(() => undefined);
     };
     const scheduleDevelopmentLoadRetry = () => {
       if (developmentLoadRetryFiber !== undefined || window.isDestroyed()) {
@@ -635,6 +761,14 @@ export const make = Effect.gen(function* () {
       clearDevelopmentLoadRetry();
       developmentLoadRetryIndex = 0;
       window.setTitle(environment.displayName);
+      // Re-sync after any load (including a reload, which discards the
+      // renderer's copy) so the window's chat list matches the registry.
+      DesktopThreadWindows.desktopThreadWindows.publishTo(window);
+      if (environment.platform === "darwin") {
+        // The synchronous fullscreen getter answers for the main window, so
+        // every window pushes its own state once its renderer is listening.
+        window.webContents.send(WINDOW_FULLSCREEN_STATE_CHANNEL, window.isFullScreen());
+      }
     });
     window.webContents.on(
       "did-fail-load",
@@ -678,20 +812,23 @@ export const make = Effect.gen(function* () {
     bindFirstRevealTrigger(revealSubscribers, () => {
       // Reveal the real window, then close the connecting splash (if any) so the
       // two don't overlap and there's no blank gap between them.
-      if (persistedSettings.mainWindowMaximized) {
+      if (isMainWindow && persistedSettings.mainWindowMaximized) {
         window.maximize();
       }
       void runPromise(Effect.andThen(electronWindow.reveal(window), dismissConnectingSplash));
     });
 
     loadApplication();
-    if (environment.isDevelopment) {
+    if (environment.isDevelopment && isMainWindow) {
       window.webContents.openDevTools({ mode: "detach" });
     }
 
     window.on("closed", () => {
       clearDevelopmentLoadRetry();
       clearBoundsPersist();
+      // Chats held by a closing window return to the catch-all window rather
+      // than disappearing with it.
+      DesktopThreadWindows.desktopThreadWindows.release(windowWebContentsId);
       void runPromise(electronWindow.clearMain(Option.some(window)));
     });
 
@@ -699,11 +836,53 @@ export const make = Effect.gen(function* () {
   });
 
   const createMain = Effect.gen(function* () {
-    const window = yield* createWindow();
+    const window = yield* createWindow({
+      role: "main",
+      routeHash: null,
+      bounds: null,
+      threadKeys: null,
+    });
     yield* electronWindow.setMain(window);
     yield* logWindowInfo("main window created");
     return window;
   }).pipe(Effect.withSpan("desktop.window.createMain"));
+
+  // The display the drop landed on, so a window torn off onto a second monitor
+  // opens there. Best-effort: if the display layout can't be read we place the
+  // window at the raw anchor rather than failing the tear-off.
+  const readWorkAreaNearPoint = (anchor: { readonly x: number; readonly y: number } | null) =>
+    Effect.sync((): DisplayBounds | null => {
+      try {
+        return anchor === null
+          ? Electron.screen.getPrimaryDisplay().workArea
+          : Electron.screen.getDisplayNearestPoint(anchor).workArea;
+      } catch {
+        return null;
+      }
+    });
+
+  const openDetachedWindow = Effect.fn("desktop.window.openDetachedWindow")(function* (
+    request: DesktopDetachedWindowRequest,
+  ): Effect.fn.Return<Electron.BrowserWindow, DesktopWindowError> {
+    const source = yield* currentMainWindow;
+    const inheritedSize =
+      Option.isSome(source) && !source.value.isDestroyed()
+        ? source.value.getNormalBounds()
+        : DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE;
+    const bounds = resolveDetachedWindowBounds({
+      anchor: request.anchor,
+      size: request.size ?? inheritedSize,
+      workArea: yield* readWorkAreaNearPoint(request.anchor),
+    });
+    const window = yield* createWindow({
+      role: "detached",
+      routeHash: request.routeHash,
+      bounds,
+      threadKeys: [request.threadKey],
+    });
+    yield* logWindowInfo("detached window created", { threadKey: request.threadKey });
+    return window;
+  });
 
   const ensureMain = Effect.gen(function* () {
     const existingWindow = yield* currentMainWindow;
@@ -775,6 +954,7 @@ export const make = Effect.gen(function* () {
 
   return DesktopWindow.of({
     createMain,
+    openDetachedWindow,
     ensureMain,
     revealOrCreateMain,
     activate: Effect.gen(function* () {

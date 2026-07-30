@@ -3,6 +3,7 @@ import type {
   DesktopPreviewPointerEvent,
   DesktopPreviewRecordingFrame,
   DesktopPreviewTabState,
+  DesktopThreadWindowScope,
 } from "@t3tools/contracts";
 import { exposeClerkBridge } from "@clerk/electron/preload";
 import { contextBridge, ipcRenderer } from "electron";
@@ -10,6 +11,43 @@ import { contextBridge, ipcRenderer } from "electron";
 import * as IpcChannels from "./ipc/channels.ts";
 
 exposeClerkBridge({ passkeys: true });
+
+function parseThreadWindowScope(value: unknown): DesktopThreadWindowScope | null {
+  if (typeof value !== "object" || value === null || !("kind" in value)) return null;
+  const isStringArray = (candidate: unknown): candidate is string[] =>
+    Array.isArray(candidate) && candidate.every((entry) => typeof entry === "string");
+
+  if (value.kind === "only" && "threadKeys" in value && isStringArray(value.threadKeys)) {
+    return { kind: "only", threadKeys: value.threadKeys };
+  }
+  if (
+    value.kind === "all" &&
+    "hiddenThreadKeys" in value &&
+    isStringArray(value.hiddenThreadKeys)
+  ) {
+    return { kind: "all", hiddenThreadKeys: value.hiddenThreadKeys };
+  }
+  return null;
+}
+
+/**
+ * A torn-off window's opening scope rides in on argv, so the renderer knows
+ * which chats it owns before its first paint. The main process pushes updates
+ * afterwards; this only has to be right at load.
+ */
+function readInitialThreadWindowScope(): DesktopThreadWindowScope | null {
+  const argument = process.argv.find((value) =>
+    value.startsWith(IpcChannels.WINDOW_SCOPE_ARGUMENT_PREFIX),
+  );
+  if (argument === undefined) return null;
+  try {
+    return parseThreadWindowScope(
+      JSON.parse(argument.slice(IpcChannels.WINDOW_SCOPE_ARGUMENT_PREFIX.length)),
+    );
+  } catch {
+    return null;
+  }
+}
 
 function unwrapEnsureSshEnvironmentResult(result: unknown) {
   if (
@@ -105,7 +143,47 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ...(position === undefined ? {} : { position }),
     }),
   openExternal: (url: string) => ipcRenderer.invoke(IpcChannels.OPEN_EXTERNAL_CHANNEL, url),
+  openThreadWindow: (request) =>
+    ipcRenderer.invoke(IpcChannels.OPEN_THREAD_WINDOW_CHANNEL, request),
+  getInitialThreadWindowScope: () => readInitialThreadWindowScope(),
+  onThreadWindowScopeChange: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, scope: unknown) => {
+      const parsed = parseThreadWindowScope(scope);
+      if (parsed === null) return;
+      listener(parsed);
+    };
+
+    ipcRenderer.on(IpcChannels.THREAD_WINDOW_SCOPE_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.THREAD_WINDOW_SCOPE_CHANNEL, wrappedListener);
+    };
+  },
+  focusThreadWindow: (threadKey) =>
+    ipcRenderer.invoke(IpcChannels.FOCUS_THREAD_WINDOW_CHANNEL, threadKey),
+  onThreadWindowFocus: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, threadKey: unknown) => {
+      if (typeof threadKey !== "string" || threadKey.length === 0) return;
+      listener(threadKey);
+    };
+
+    ipcRenderer.on(IpcChannels.THREAD_WINDOW_FOCUS_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.THREAD_WINDOW_FOCUS_CHANNEL, wrappedListener);
+    };
+  },
+  claimThreadWindow: (threadKey) => {
+    // Fire and forget: ownership is a hint the main process reconciles, and a
+    // failed claim must never break navigation.
+    void ipcRenderer
+      .invoke(IpcChannels.CLAIM_THREAD_WINDOW_CHANNEL, threadKey)
+      .catch(() => undefined);
+  },
   setMacDictation: (active) => ipcRenderer.invoke(IpcChannels.SET_MAC_DICTATION_CHANNEL, active),
+  getKeepMacAwake: () => ipcRenderer.invoke(IpcChannels.GET_KEEP_MAC_AWAKE_CHANNEL),
+  setKeepMacAwake: (enabled) => ipcRenderer.invoke(IpcChannels.SET_KEEP_MAC_AWAKE_CHANNEL, enabled),
+  getRemoteAccessEnabled: () => ipcRenderer.invoke(IpcChannels.GET_REMOTE_ACCESS_ENABLED_CHANNEL),
+  setRemoteAccessEnabled: (enabled) =>
+    ipcRenderer.invoke(IpcChannels.SET_REMOTE_ACCESS_ENABLED_CHANNEL, enabled),
   onMenuAction: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, action: unknown) => {
       if (typeof action !== "string") return;

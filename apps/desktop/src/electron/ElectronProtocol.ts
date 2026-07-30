@@ -24,6 +24,18 @@ export function getDesktopUrl(isDevelopment: boolean): string {
   return `${getDesktopOrigin(isDevelopment)}/`;
 }
 
+/**
+ * The renderer runs on hash history under Electron, so a window can be pointed
+ * at a specific chat purely through the URL fragment. Mirrors the renderer's
+ * "/$environmentId/$threadId" route.
+ */
+export function getThreadRouteHash(ref: {
+  readonly environmentId: string;
+  readonly threadId: string;
+}): string {
+  return `#/${encodeURIComponent(ref.environmentId)}/${encodeURIComponent(ref.threadId)}`;
+}
+
 export class ElectronProtocolRegistrationError extends Schema.TaggedErrorClass<ElectronProtocolRegistrationError>()(
   "ElectronProtocolRegistrationError",
   {
