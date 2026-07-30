@@ -77,6 +77,15 @@ export type CodexMicroWorkspaceState = {
     readonly active: boolean;
     readonly nativeVoice: false;
   }>;
+  /**
+   * Every project the phone may start a new chat in. The NEW key opens a
+   * project picker whenever this list is non-empty, so an empty list is the
+   * only thing that makes NEW fall back to the default project.
+   */
+  readonly projects: ReadonlyArray<{
+    readonly id: string;
+    readonly title: string;
+  }>;
   readonly pins: ReadonlyArray<string | null>;
   readonly selected?: string;
   readonly nativeVoiceActive?: boolean;
@@ -113,6 +122,88 @@ const INITIAL_SNAPSHOT: CodexMicroRemoteSnapshot = {
 
 const WORKSPACE_WRITE_INTERVAL_MS = 100;
 
+/**
+ * How long a reported phone drop must persist before the session is torn down.
+ *
+ * Real reconnects — the phone genuinely dropping and the companion re-linking
+ * it — take a couple of seconds, with a tail well past that. Riding them out
+ * keeps a recoverable blip from surfacing as a visible connect/disconnect
+ * cycle; a phone that is actually gone still tears down, just a moment later.
+ */
+const PHONE_DROP_GRACE_MS = 8_000;
+
+/**
+ * Keys the phone *merges* into its retained per-surface state: an absent key
+ * leaves the previous value in place. Everything outside this list is
+ * replace-always on the phone (an absent `connected` reads as disconnected, an
+ * absent `selected` as no selection), so those fields ship in every frame.
+ *
+ * This split is what makes delta frames safe, and delta frames are what make
+ * the board feel live. A full state carries every thread title and project
+ * name — easily kilobytes — and goes out as 61-byte *unacknowledged* GATT
+ * writes, so a full rewrite for a single slot turning blue costs dozens of
+ * sequential packets: seconds of latency, and dozens of chances for a dropped
+ * fragment to corrupt the newline-framed reassembly and leave the keys showing
+ * stale or blank lights. A light change now fits in one or two packets.
+ */
+const MERGEABLE_WORKSPACE_STATE_KEYS = [
+  "lightingBrightness",
+  "autoDimSeconds",
+  "targets",
+  "projects",
+  "pins",
+  "slots",
+  "controls",
+] as const satisfies ReadonlyArray<keyof CodexMicroWorkspaceState>;
+
+export type CodexMicroWorkspaceStateFrame = Record<string, unknown>;
+
+/**
+ * Build the smallest frame that moves the phone from `previous` to `next`.
+ * Passing `null` for `previous` produces a full frame, which is what a fresh
+ * connection and an explicit replay need.
+ */
+export function buildWorkspaceStateFrame(
+  next: CodexMicroWorkspaceState,
+  previous: CodexMicroWorkspaceState | null,
+): CodexMicroWorkspaceStateFrame {
+  const frame: CodexMicroWorkspaceStateFrame = {
+    type: next.type,
+    version: next.version,
+    surface: next.surface,
+    connected: next.connected,
+    nativeVoiceActive: next.nativeVoiceActive ?? false,
+  };
+  if (next.selected !== undefined) frame.selected = next.selected;
+  if (next.issue !== undefined) frame.issue = next.issue;
+
+  for (const key of MERGEABLE_WORKSPACE_STATE_KEYS) {
+    if (previous === null || JSON.stringify(previous[key]) !== JSON.stringify(next[key])) {
+      frame[key] = next[key];
+    }
+  }
+  return frame;
+}
+
+/**
+ * True when a frame carries nothing the phone does not already have. The
+ * replace-always scalars are present in every frame, so "no mergeable keys and
+ * identical scalars" is the real definition of a no-op.
+ */
+export function isRedundantWorkspaceStateFrame(
+  frame: CodexMicroWorkspaceStateFrame,
+  previous: CodexMicroWorkspaceState | null,
+): boolean {
+  if (previous === null) return false;
+  if (MERGEABLE_WORKSPACE_STATE_KEYS.some((key) => key in frame)) return false;
+  return (
+    frame.connected === previous.connected &&
+    frame.nativeVoiceActive === (previous.nativeVoiceActive ?? false) &&
+    frame.selected === previous.selected &&
+    frame.issue === previous.issue
+  );
+}
+
 class CodexMicroRemote {
   private snapshot = INITIAL_SNAPSHOT;
   private readonly listeners = new Set<() => void>();
@@ -123,8 +214,11 @@ class CodexMicroRemote {
   private output: BluetoothCharacteristicLike | null = null;
   private writeReport: ((report: Uint8Array) => Promise<void>) | null = null;
   private workspaceState: CodexMicroWorkspaceState | null = null;
+  /** Last state the phone has certainly received; `null` forces a full frame. */
+  private lastSentWorkspaceState: CodexMicroWorkspaceState | null = null;
   private reconnectTimer: number | null = null;
   private livenessTimer: number | null = null;
+  private phoneDropTimer: number | null = null;
   private reconnectAttempt = 0;
   private writeQueue = Promise.resolve();
   private workspaceWriteScheduled = false;
@@ -243,6 +337,7 @@ class CodexMicroRemote {
   disconnect(): void {
     this.clearReconnect();
     this.clearLiveness();
+    this.clearPhoneDropGrace();
     this.snapshot = { ...this.snapshot, autoReconnect: true };
     if (this.desktopTransport() !== null) {
       // The native menu companion owns the shared Bluetooth link and recovers
@@ -254,6 +349,7 @@ class CodexMicroRemote {
     this.device = null;
     this.output = null;
     this.writeReport = null;
+    this.lastSentWorkspaceState = null;
     this.decoder.reset();
     this.update({ phase: "disconnected", deviceName: null, error: null });
     this.scheduleReconnect();
@@ -269,6 +365,9 @@ class CodexMicroRemote {
 
   replayWorkspaceState(): void {
     this.clearWorkspaceFlush();
+    // A replay exists precisely because the phone's view is in doubt (it just
+    // switched pages, or asked for a refresh), so resend everything.
+    this.lastSentWorkspaceState = null;
     this.enqueueWorkspaceState();
   }
 
@@ -314,6 +413,31 @@ class CodexMicroRemote {
   private applyDesktopTransportState(state: DesktopCodexMicroTransportState): void {
     if (state.revision <= this.desktopTransportRevision) return;
     this.desktopTransportRevision = state.revision;
+
+    // A momentary "phone gone" while the companion itself is still up is
+    // almost always a device re-presentation, not a real disconnect. Wait it
+    // out: if the phone is back within the grace the session never notices,
+    // and if it is really gone the teardown below runs a moment later.
+    const stillLinked = state.companionConnected && state.phoneConnected;
+    if (!stillLinked && state.companionConnected && this.snapshot.phase === "connected") {
+      if (this.phoneDropTimer === null) {
+        this.phoneDropTimer = window.setTimeout(() => {
+          this.phoneDropTimer = null;
+          this.applyDesktopTransportDisconnect(state);
+        }, PHONE_DROP_GRACE_MS);
+      }
+      return;
+    }
+    const wasGraced = this.phoneDropTimer !== null;
+    this.clearPhoneDropGrace();
+
+    // The phone came back inside the grace, so nothing was ever torn down.
+    // Rebuilding the session here would force a full workspace re-push on every
+    // blip — invisible, but a needless multi-kilobyte write over BLE each time.
+    if (wasGraced && stillLinked && this.desktopTransport() !== null) {
+      return;
+    }
+
     this.clearReconnect();
     this.clearLiveness();
     this.device = null;
@@ -331,11 +455,26 @@ class CodexMicroRemote {
         deviceName: "Codex Micro",
         error: null,
       });
+      // The companion may have reconnected to a different phone session, so
+      // never assume it still holds the state we last sent.
+      this.lastSentWorkspaceState = null;
       this.enqueueWorkspaceState();
       return;
     }
 
+    this.applyDesktopTransportDisconnect(state);
+  }
+
+  private applyDesktopTransportDisconnect(state: DesktopCodexMicroTransportState): void {
+    // Idempotent, and repeated here because the grace timer reaches this
+    // without having gone through the caller's preamble.
+    this.clearReconnect();
+    this.clearLiveness();
+    this.device = null;
+    this.output = null;
+    this.snapshot = { ...this.snapshot, autoReconnect: true };
     this.writeReport = null;
+    this.lastSentWorkspaceState = null;
     this.decoder.reset();
     this.update({
       phase: "scanning",
@@ -346,6 +485,13 @@ class CodexMicroRemote {
           ? "Codex Micro is ready. Open the iPhone app to connect automatically."
           : "Opening the Codex Micro menu companion…"),
     });
+  }
+
+  private clearPhoneDropGrace(): void {
+    if (this.phoneDropTimer !== null) {
+      window.clearTimeout(this.phoneDropTimer);
+      this.phoneDropTimer = null;
+    }
   }
 
   private async connectDevice(device: BluetoothDeviceLike): Promise<void> {
@@ -377,6 +523,8 @@ class CodexMicroRemote {
     this.reconnectAttempt = 0;
     this.update({ phase: "connected", deviceName: device.name ?? "Codex Micro", error: null });
     this.notePhoneActivity();
+    // A new link means the phone retained nothing: start from a full frame.
+    this.lastSentWorkspaceState = null;
     this.enqueueWorkspaceState();
   }
 
@@ -410,6 +558,7 @@ class CodexMicroRemote {
     this.clearLiveness();
     this.output = null;
     this.writeReport = null;
+    this.lastSentWorkspaceState = null;
     this.decoder.reset();
     this.update({ phase: "disconnected", error: null });
     this.scheduleReconnect();
@@ -469,17 +618,34 @@ class CodexMicroRemote {
     }
     const state = this.workspaceState;
     const writeReport = this.writeReport;
+    const baseline = this.lastSentWorkspaceState;
+    const frame = buildWorkspaceStateFrame(state, baseline);
+    if (isRedundantWorkspaceStateFrame(frame, baseline)) {
+      this.workspaceWriteDirty = false;
+      return;
+    }
     this.workspaceWriteDirty = false;
     this.workspaceWriteScheduled = true;
     this.writeQueue = this.writeQueue
       .then(async () => {
-        const reports = encodeReports(CODEX_MICRO_STATE_CHANNEL, state);
+        const reports = encodeReports(CODEX_MICRO_STATE_CHANNEL, frame);
         for (const report of reports) {
           await writeReport(report);
         }
+        // A replay or a dropped link may have invalidated the baseline while
+        // this frame was queued. Adopting `state` then would cancel the full
+        // resync those paths asked for, so only advance an intact baseline.
+        if (this.lastSentWorkspaceState === baseline) {
+          this.lastSentWorkspaceState = state;
+        }
         this.lastWorkspaceWriteAt = Date.now();
       })
-      .catch((error) => this.fail(error))
+      .catch((error) => {
+        // A partially written frame leaves the phone in an unknown state, so
+        // the next attempt must be a full resync rather than another delta.
+        this.lastSentWorkspaceState = null;
+        this.fail(error);
+      })
       .finally(() => {
         this.workspaceWriteScheduled = false;
         if (

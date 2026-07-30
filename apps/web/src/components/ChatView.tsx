@@ -67,6 +67,8 @@ import {
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { isElectron } from "../env";
+import { pinCodexMicroTarget, requestCodexMicroAutoPin } from "../codexMicro/pins";
+import { getCodexMicroPreferences } from "../codexMicro/preferences";
 import { readLocalApi } from "../localApi";
 import { useDiffPanelStore } from "../diffPanelStore";
 import {
@@ -119,7 +121,6 @@ import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import {
   CODEX_MICRO_CHAT_COMMAND_EVENT,
-  CODEX_MICRO_NEW_THREAD_EVENT,
   type CodexMicroChatCommand,
 } from "../codexMicro/controller";
 import { expandBuiltinSkills } from "../builtinSkills";
@@ -454,6 +455,12 @@ function formatOutgoingPrompt(params: {
   const promptEffort = resolvePromptInjectedEffort(caps, params.effort);
   return applyClaudePromptEffortPrefix(params.text, promptEffort);
 }
+/**
+ * Transcript travel per fine dial tick. The phone emits one tick per 15° of
+ * turn, so a quarter turn moves ~720px and a full revolution clears a couple
+ * of screens — a wheel-like feel rather than a jump.
+ */
+const CODEX_MICRO_SCROLL_TICK_PX = 120;
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
 
@@ -3900,6 +3907,9 @@ function ChatViewContent(props: ChatViewProps) {
         environmentId: activeThreadRef.environmentId,
         input: { threadId: activeThreadRef.threadId, reason: "user" },
       });
+      if (result._tag === "Success") {
+        pinCodexMicroTarget(activeThreadRef.environmentId, activeThreadRef.threadId);
+      }
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         toastManager.add(
@@ -4779,6 +4789,9 @@ function ChatViewContent(props: ChatViewProps) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
+        if (isLocalDraftThread && getCodexMicroPreferences().autoPinNewChats) {
+          requestCodexMicroAutoPin(activeThread.environmentId, threadIdForSend);
+        }
       }
     }
 
@@ -4913,31 +4926,33 @@ function ChatViewContent(props: ChatViewProps) {
         case "send":
           void onSend();
           break;
-        case "modelPicker":
-          composerRef.current?.toggleModelPicker();
-          break;
         case "effort":
           composerRef.current?.cycleReasoningEffort(command.direction);
           break;
+        case "scroll": {
+          // One fine dial tick moves the transcript like a wheel notch. It is
+          // treated as manual navigation so scrolling back does not fight the
+          // live-follow that pins the view to the newest message.
+          const scrollNode = legendListRef.current?.getScrollableNode();
+          if (!scrollNode || typeof scrollNode.scrollBy !== "function") break;
+          cancelTimelineLiveFollowForUserNavigationRef.current();
+          scrollNode.scrollBy({
+            top: command.direction * CODEX_MICRO_SCROLL_TICK_PX,
+            behavior: "auto",
+          });
+          break;
+        }
         case "plan":
           handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
           break;
         case "browser":
-          if (activeThreadRef) {
-            const activeTabId = activePreviewState.activeTabId;
-            if (activeTabId) {
-              useRightPanelStore.getState().openBrowser(activeThreadRef, activeTabId);
-            } else {
-              createBrowserSurface();
-            }
-          }
+          togglePreviewPanel();
           break;
         case "terminal":
-          if (!terminalUiState.terminalOpen) {
-            toggleTerminalVisibility();
-          } else {
-            setTerminalFocusRequestId((value) => value + 1);
-          }
+          toggleTerminalVisibility();
+          break;
+        case "focusComposer":
+          composerRef.current?.focusAtEnd();
           break;
         case "insert":
           if (composerRef.current?.insertTextAtEnd(command.text) && command.submit) {
@@ -4958,10 +4973,7 @@ function ChatViewContent(props: ChatViewProps) {
     interactionMode,
     onRespondToApproval,
     onSend,
-    activeThreadRef,
-    activePreviewState.activeTabId,
-    createBrowserSurface,
-    terminalUiState.terminalOpen,
+    togglePreviewPanel,
     toggleTerminalVisibility,
   ]);
 
@@ -5368,6 +5380,9 @@ function ChatViewContent(props: ChatViewProps) {
     }
 
     if (failure === null) {
+      if (getCodexMicroPreferences().autoPinNewChats) {
+        requestCodexMicroAutoPin(activeThread.environmentId, nextThreadId);
+      }
       // Signal that the plan sidebar should open on the new thread when enabled.
       planSidebarOpenOnNextThreadRef.current = autoOpenPlanSidebar;
       const navigateResult = await settlePromise(() =>

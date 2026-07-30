@@ -1,6 +1,14 @@
 export type CodexMicroPreferences = {
   readonly brightness: number;
   readonly autoDimSeconds: number;
+  readonly autoPinNewChats: boolean;
+  /**
+   * What the encoder dial drives. The phone always emits both a coarse detent
+   * stream (one per 90° of turn) and a fine scroll stream (one per 15°); this
+   * picks which one T3 Code listens to, so switching modes needs no phone-side
+   * setting and no round-trip.
+   */
+  readonly dialFunction: CodexMicroDialFunction;
   readonly actionKeys: readonly [
     CodexMicroAction,
     CodexMicroAction,
@@ -23,6 +31,33 @@ export type CodexMicroAction =
   | "sideChat";
 
 export type CodexMicroJoystickDirection = "up" | "right" | "down" | "left";
+
+export type CodexMicroDialFunction = "effort" | "scroll";
+
+export const CODEX_MICRO_DIAL_FUNCTIONS: ReadonlyArray<{
+  readonly value: CodexMicroDialFunction;
+  readonly label: string;
+  readonly description: string;
+}> = [
+  {
+    value: "effort",
+    label: "Reasoning effort",
+    description: "A quarter turn steps the model's reasoning level by one.",
+  },
+  {
+    value: "scroll",
+    label: "Scroll the chat",
+    description: "Turning scrolls the conversation smoothly, like a scroll wheel.",
+  },
+];
+
+const DIAL_FUNCTION_VALUES = new Set<CodexMicroDialFunction>(
+  CODEX_MICRO_DIAL_FUNCTIONS.map((entry) => entry.value),
+);
+
+function isDialFunction(value: unknown): value is CodexMicroDialFunction {
+  return typeof value === "string" && DIAL_FUNCTION_VALUES.has(value as CodexMicroDialFunction);
+}
 
 export const CODEX_MICRO_ACTIONS: ReadonlyArray<{
   readonly value: CodexMicroAction;
@@ -99,6 +134,8 @@ const CHANGE_EVENT = "t3-codex-micro-preferences-changed";
 export const DEFAULT_CODEX_MICRO_PREFERENCES: CodexMicroPreferences = {
   brightness: 100,
   autoDimSeconds: 180,
+  autoPinNewChats: true,
+  dialFunction: "effort",
   actionKeys: ["fast", "new", "pin", "clear"],
   joystick: {
     up: "frontendMax",
@@ -120,6 +157,8 @@ function readStoredPreferences(): CodexMicroPreferences {
       const candidate = value as {
         brightness?: unknown;
         autoDimSeconds?: unknown;
+        autoPinNewChats?: unknown;
+        dialFunction?: unknown;
         actionKeys?: unknown;
         joystick?: unknown;
       };
@@ -132,6 +171,13 @@ function readStoredPreferences(): CodexMicroPreferences {
         [0, 60, 180, 300].includes(candidate.autoDimSeconds)
           ? candidate.autoDimSeconds
           : DEFAULT_CODEX_MICRO_PREFERENCES.autoDimSeconds;
+      const autoPinNewChats =
+        typeof candidate.autoPinNewChats === "boolean"
+          ? candidate.autoPinNewChats
+          : DEFAULT_CODEX_MICRO_PREFERENCES.autoPinNewChats;
+      const dialFunction = isDialFunction(candidate.dialFunction)
+        ? candidate.dialFunction
+        : DEFAULT_CODEX_MICRO_PREFERENCES.dialFunction;
       const storedActionKeys = Array.isArray(candidate.actionKeys) ? candidate.actionKeys : [];
       const actionAt = (index: number): CodexMicroAction =>
         isAction(storedActionKeys[index])
@@ -155,7 +201,7 @@ function readStoredPreferences(): CodexMicroPreferences {
             : DEFAULT_CODEX_MICRO_PREFERENCES.joystick[direction],
         ]),
       ) as CodexMicroPreferences["joystick"];
-      return { brightness, autoDimSeconds, actionKeys, joystick };
+      return { brightness, autoDimSeconds, autoPinNewChats, dialFunction, actionKeys, joystick };
     }
   } catch {
     // Damaged preferences safely fall back to the device defaults.
@@ -186,6 +232,10 @@ export function setCodexMicroPreferences(patch: Partial<CodexMicroPreferences>):
         : [0, 60, 180, 300].includes(patch.autoDimSeconds)
           ? patch.autoDimSeconds
           : cachedPreferences.autoDimSeconds,
+    autoPinNewChats: patch.autoPinNewChats ?? cachedPreferences.autoPinNewChats,
+    dialFunction: isDialFunction(patch.dialFunction)
+      ? patch.dialFunction
+      : cachedPreferences.dialFunction,
     actionKeys: patch.actionKeys ?? cachedPreferences.actionKeys,
     joystick: patch.joystick ?? cachedPreferences.joystick,
   };

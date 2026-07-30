@@ -19,19 +19,22 @@ import {
 } from "lucide-react";
 import { type CSSProperties, type ReactNode, useState, useSyncExternalStore } from "react";
 
-import { resetCodexMicroPins } from "../../codexMicro/controller";
+import { resetCodexMicroPins } from "../../codexMicro/pins";
 import {
   CODEX_MICRO_ACTIONS,
+  CODEX_MICRO_DIAL_FUNCTIONS,
   getCodexMicroPreferences,
   resetCodexMicroPreferences,
   setCodexMicroPreferences,
   subscribeCodexMicroPreferences,
   type CodexMicroAction,
+  type CodexMicroDialFunction,
   type CodexMicroJoystickDirection,
 } from "../../codexMicro/preferences";
 import { codexMicroRemote } from "../../codexMicro/remote";
 import { isElectron } from "../../env";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
+import { Switch } from "../ui/switch";
 import { SettingsPageContainer } from "./settingsLayout";
 
 const DEVICE_KEY_CLASS =
@@ -565,14 +568,56 @@ export function CodexMicroSettings() {
 
         <div className="rounded-2xl border border-border bg-card/70 px-4 sm:px-[17px]">
           <SettingLine
+            title="Auto-pin new chats"
+            description="Pin a chat after its first message is sent. Every chat can still be unpinned."
+            control={
+              <Switch
+                checked={preferences.autoPinNewChats}
+                onCheckedChange={(checked) =>
+                  setCodexMicroPreferences({ autoPinNewChats: checked })
+                }
+                aria-label="Auto-pin new chats"
+              />
+            }
+          />
+          <SettingLine
             title="Agent keys"
             description={`Agent 1–2 are the top row; Agent 3–6 continue left-to-right below · ${pinnedCount} pinned`}
-            control={<span>Pinned tasks</span>}
+            control={
+              pinnedCount > 0 ? (
+                <button
+                  type="button"
+                  className="rounded-md px-2 py-1 text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+                  onClick={resetCodexMicroPins}
+                >
+                  Clear all
+                </button>
+              ) : (
+                <span>None pinned</span>
+              )
+            }
           />
           <SettingLine
             title="Knob"
-            description="Turn to change reasoning effort; hold to open Codex Micro settings"
-            control={<span>Reasoning effort</span>}
+            description={`${
+              CODEX_MICRO_DIAL_FUNCTIONS.find((entry) => entry.value === preferences.dialFunction)
+                ?.description ?? ""
+            } Hold to open Codex Micro settings.`}
+            control={
+              <SetupSelect
+                label="Knob function"
+                value={preferences.dialFunction}
+                onChange={(value) =>
+                  setCodexMicroPreferences({ dialFunction: value as CodexMicroDialFunction })
+                }
+              >
+                {CODEX_MICRO_DIAL_FUNCTIONS.map((entry) => (
+                  <option key={entry.value} value={entry.value}>
+                    {entry.label}
+                  </option>
+                ))}
+              </SetupSelect>
+            }
           />
 
           <CodexMicroPreview />

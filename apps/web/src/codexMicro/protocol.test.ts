@@ -35,6 +35,17 @@ describe("Codex Micro BLE framing", () => {
     expect(reports.every((report) => (report[1] ?? 0) <= 61)).toBe(true);
   });
 
+  it("terminates every frame with a newline so a dropped fragment costs one frame", () => {
+    // Without the delimiter the phone buffers until the bytes happen to parse
+    // as JSON, so a single lost fragment corrupts every frame after it.
+    const reports = encodeReports(CODEX_MICRO_STATE_CHANNEL, { type: "workspace-state" });
+    const last = reports.at(-1);
+
+    expect(last).toBeDefined();
+    const length = last![1] ?? 0;
+    expect(last![1 + length]).toBe(0x0a);
+  });
+
   it("ignores unrelated and malformed reports without poisoning the next command", () => {
     const decoder = new CodexMicroCommandDecoder();
     const malformed = new Uint8Array([CODEX_MICRO_CONTROL_CHANNEL, 62]);

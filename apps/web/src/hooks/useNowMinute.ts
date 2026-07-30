@@ -23,7 +23,16 @@ function tick(): void {
   }
 }
 
+function stopTimer(): void {
+  if (timerId === null) return;
+  if (timerIsInterval) window.clearInterval(timerId);
+  else window.clearTimeout(timerId);
+  timerId = null;
+}
+
 function startTimer(): void {
+  if (timerId !== null || listeners.size === 0) return;
+  if (typeof document !== "undefined" && document.hidden) return;
   // Align to the next UTC minute boundary, then tick every 60s. Ticks re-read
   // the clock, so a throttled or late timer self-corrects when it fires.
   timerIsInterval = false;
@@ -37,25 +46,34 @@ function startTimer(): void {
   );
 }
 
+function onVisibilityChange(): void {
+  if (document.hidden) {
+    stopTimer();
+    return;
+  }
+  tick();
+  startTimer();
+}
+
 function subscribe(listener: () => void): () => void {
   if (listeners.size === 0) {
-    startTimer();
+    document.addEventListener("visibilitychange", onVisibilityChange);
   }
   listeners.add(listener);
+  startTimer();
   return () => {
     listeners.delete(listener);
-    if (listeners.size === 0 && timerId !== null) {
-      if (timerIsInterval) window.clearInterval(timerId);
-      else window.clearTimeout(timerId);
-      timerId = null;
+    if (listeners.size === 0) {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      stopTimer();
     }
   };
 }
 
 function getSnapshot(): string {
-  // With no timer running (no subscribers yet — e.g. the first render after
-  // a full unmount), the stored minute may be stale; re-read it so a fresh
-  // mount renders the current minute instead of waiting for the first tick.
+  // With no timer running (no subscribers yet, or the document is hidden),
+  // the stored minute may be stale; re-read it so a fresh mount renders the
+  // current minute instead of waiting for the first tick.
   // While the timer runs the cached value is returned untouched, as
   // useSyncExternalStore requires between change notifications.
   if (timerId === null) {

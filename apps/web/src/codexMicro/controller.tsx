@@ -1,23 +1,41 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  parseScopedThreadKey,
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useLocation, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
 import { isElectron } from "../env";
-import { useThreadShells } from "../state/entities";
+import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { startNewThreadFromContext } from "../lib/chatThreadActions";
+import { useAllEnvironmentShellsBootstrapped, useThreadShells } from "../state/entities";
 import { buildThreadRouteParams } from "../threadRoutes";
+import { focusThreadInOwningWindow, onThreadWindowFocus } from "../threadWindowScope";
+import { useUiStateStore } from "../uiStateStore";
 import { useSidebar } from "../components/ui/sidebar";
+import { slotForStatus, statusForThread } from "./lights";
 import { codexMicroRemote, type CodexMicroWorkspaceState } from "./remote";
 import type { CodexMicroCommand } from "./protocol";
+import {
+  applyCodexMicroAutoPins,
+  decodeCodexMicroTarget,
+  encodeCodexMicroTarget,
+  readCodexMicroPins,
+  reconcileCodexMicroPins,
+  subscribeCodexMicroAutoPinRequests,
+  toggleCodexMicroPin,
+  writeCodexMicroPins,
+} from "./pins";
+import { decodeCodexMicroProject, encodeCodexMicroProject } from "./projects";
 import {
   CODEX_MICRO_ACTIONS,
   getCodexMicroPreferences,
   subscribeCodexMicroPreferences,
   type CodexMicroAction,
 } from "./preferences";
-
-const PINS_STORAGE_KEY = "t3.codexMicro.pins.v1";
-const SLOT_COUNT = 6;
 
 export const CODEX_MICRO_CHAT_COMMAND_EVENT = "t3-codex-micro-chat-command";
 export const CODEX_MICRO_NEW_THREAD_EVENT = "t3-codex-micro-new-thread";
@@ -29,127 +47,20 @@ export type CodexMicroChatCommand =
   | { readonly kind: "fork" }
   | { readonly kind: "clear" }
   | { readonly kind: "send" }
-  | { readonly kind: "modelPicker" }
   | { readonly kind: "effort"; readonly direction: -1 | 1 }
+  | { readonly kind: "scroll"; readonly direction: -1 | 1 }
   | { readonly kind: "plan" }
   | { readonly kind: "browser" }
   | { readonly kind: "terminal" }
+  | { readonly kind: "focusComposer" }
   | { readonly kind: "insert"; readonly text: string; readonly submit: boolean };
 
-function readPins(): Array<string | null> {
-  try {
-    const value: unknown = JSON.parse(localStorage.getItem(PINS_STORAGE_KEY) ?? "[]");
-    if (Array.isArray(value)) {
-      const compact = value.filter(
-        (pin): pin is string => typeof pin === "string" && pin.length > 0,
-      );
-      return Array.from({ length: SLOT_COUNT }, (_, index) => compact[index] ?? null);
-    }
-  } catch {
-    // Fall through to an empty layout.
-  }
-  return Array.from({ length: SLOT_COUNT }, () => null);
-}
-
-function writePins(pins: ReadonlyArray<string | null>): void {
-  const compact = pins.filter((pin): pin is string => typeof pin === "string" && pin.length > 0);
-  const normalized = Array.from({ length: SLOT_COUNT }, (_, index) => compact[index] ?? null);
-  localStorage.setItem(PINS_STORAGE_KEY, JSON.stringify(normalized));
-  window.dispatchEvent(new Event("t3-codex-micro-pins-changed"));
-}
-
-function subscribePins(listener: () => void): () => void {
-  window.addEventListener("t3-codex-micro-pins-changed", listener);
-  return () => window.removeEventListener("t3-codex-micro-pins-changed", listener);
-}
-
-export function useCodexMicroIsPinned(environmentId: string, threadId: string): boolean {
-  const serialized = useSyncExternalStore(
-    subscribePins,
-    () => localStorage.getItem(PINS_STORAGE_KEY) ?? "[]",
-    () => "[]",
-  );
-  try {
-    const pins: unknown = JSON.parse(serialized);
-    return Array.isArray(pins) && pins.includes(encodeCodexMicroTarget(environmentId, threadId));
-  } catch {
-    return false;
-  }
-}
-
-export function useCodexMicroPinnedTargets(): readonly string[] {
-  const serialized = useSyncExternalStore(
-    subscribePins,
-    () => localStorage.getItem(PINS_STORAGE_KEY) ?? "[]",
-    () => "[]",
-  );
-  return useMemo(() => {
-    try {
-      const pins: unknown = JSON.parse(serialized);
-      if (!Array.isArray(pins)) return [];
-      return pins
-        .filter((pin): pin is string => typeof pin === "string" && pin.length > 0)
-        .slice(0, SLOT_COUNT);
-    } catch {
-      return [];
-    }
-  }, [serialized]);
-}
-
-export function resetCodexMicroPins(): void {
-  localStorage.removeItem(PINS_STORAGE_KEY);
-  window.dispatchEvent(new Event("t3-codex-micro-pins-changed"));
-}
-
-export function encodeCodexMicroTarget(environmentId: string, threadId: string): string {
-  return `${encodeURIComponent(environmentId)}|${encodeURIComponent(threadId)}`;
-}
-
-export function decodeCodexMicroTarget(
-  value: string,
-): { environmentId: string; threadId: string } | null {
-  const separator = value.indexOf("|");
-  if (separator < 1 || separator === value.length - 1) return null;
-  try {
-    return {
-      environmentId: decodeURIComponent(value.slice(0, separator)),
-      threadId: decodeURIComponent(value.slice(separator + 1)),
-    };
-  } catch {
-    return null;
-  }
-}
-
-function statusForThread(thread: ReturnType<typeof useThreadShells>[number]): string {
-  if (thread.hasPendingApprovals || thread.hasPendingUserInput) return "needs_input";
-  if (thread.latestTurn?.state === "running") {
-    return "working";
-  }
-  if (thread.latestTurn?.state === "error") return "error";
-  if (thread.latestTurn?.state === "completed") return "complete";
-  return "idle";
-}
-
-function slotForStatus(id: number, status: string, selected: boolean) {
-  // Status color is authoritative. A selected working task must remain blue;
-  // selection is expressed by the breathing effect, not by erasing its state.
-  if (status === "working") {
-    return { id, c: 0x304ffe, b: 1, e: 4, s: 0.4, status };
-  }
-  if (selected) {
-    return { id, c: 0xffffff, b: 1, e: 4, s: 0.4, status: "selected" };
-  }
-  switch (status) {
-    case "complete":
-      return { id, c: 0x00ff4c, b: 1, e: 1, s: 0, status };
-    case "needs_input":
-      return { id, c: 0xff8f00, b: 1, e: 4, s: 0.4, status };
-    case "error":
-      return { id, c: 0xff0033, b: 1, e: 1, s: 0, status };
-    default:
-      return { id, c: 0xffffff, b: 1, e: 1, s: 0, status: "idle" };
-  }
-}
+export {
+  encodeCodexMicroTarget,
+  resetCodexMicroPins,
+  useCodexMicroIsPinned,
+  useCodexMicroPinnedTargets,
+} from "./pins";
 
 function dispatchChatCommand(command: CodexMicroChatCommand): void {
   window.dispatchEvent(
@@ -164,6 +75,7 @@ function runAction(
   selected: string | null,
   navigate: ReturnType<typeof useNavigate>,
   toggleSidebar: () => void,
+  startNewThread: () => void,
 ): void {
   switch (action) {
     case "fast":
@@ -172,22 +84,14 @@ function runAction(
       dispatchChatCommand({ kind: action });
       return;
     case "new":
-      window.dispatchEvent(new Event(CODEX_MICRO_NEW_THREAD_EVENT));
+      startNewThread();
       return;
     case "fork":
       dispatchChatCommand({ kind: "fork" });
       return;
     case "pin": {
       if (!selected) return;
-      const pins = readPins();
-      const existing = pins.indexOf(selected);
-      if (existing >= 0) pins[existing] = null;
-      else {
-        const free = pins.indexOf(null);
-        if (free < 0) return;
-        pins[free] = selected;
-      }
-      writePins(pins);
+      toggleCodexMicroPin(selected);
       return;
     }
     case "frontendMax":
@@ -207,40 +111,144 @@ function runAction(
 
 export function CodexMicroController() {
   const threads = useThreadShells();
+  const threadsBootstrapped = useAllEnvironmentShellsBootstrapped();
   const navigate = useNavigate();
   const location = useLocation();
   const { toggleSidebar } = useSidebar();
+  const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread, orderedProjects } =
+    useHandleNewThread();
   const preferences = useSyncExternalStore(
     subscribeCodexMicroPreferences,
     getCodexMicroPreferences,
     getCodexMicroPreferences,
   );
   const [pinsRevision, setPinsRevision] = useState(0);
+  const [pendingAutoPins, setPendingAutoPins] = useState<readonly string[]>([]);
   const [nativeVoiceActive, setNativeVoiceActive] = useState(false);
   const [nativeVoiceIssue, setNativeVoiceIssue] = useState<string | null>(null);
+  const threadLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
   const selected = useMemo(() => {
     const match = location.pathname.match(/^\/([^/]+)\/([^/]+)$/);
     if (!match) return null;
     return encodeCodexMicroTarget(match[1] ?? "", match[2] ?? "");
   }, [location.pathname]);
+  // A pinned key names a chat, not "whatever is in front of me". If that chat
+  // lives in another window, raise that window instead of navigating here —
+  // navigating would *move* the chat, and a torn-off window that loses its last
+  // chat closes.
+  const openThreadTarget = useCallback(
+    (environmentId: string, threadId: string) => {
+      const threadRef = scopeThreadRef(environmentId as EnvironmentId, threadId as ThreadId);
+      void (async () => {
+        if (await focusThreadInOwningWindow(scopedThreadKey(threadRef))) return;
+        await navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(threadRef),
+        });
+      })().catch(() => undefined);
+    },
+    [navigate],
+  );
+
+  // The window that owns a chat is asked to show it when another window's
+  // remote or deep link targets it.
+  useEffect(
+    () =>
+      onThreadWindowFocus((threadKey) => {
+        const threadRef = parseScopedThreadKey(threadKey);
+        if (!threadRef) return;
+        void navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(threadRef),
+        });
+      }),
+    [navigate],
+  );
+
+  const startCodexMicroNewThread = useCallback(() => {
+    void startNewThreadFromContext({
+      activeDraftThread,
+      activeThread: activeThread ?? undefined,
+      defaultProjectRef,
+      handleNewThread,
+    });
+  }, [activeDraftThread, activeThread, defaultProjectRef, handleNewThread]);
+
+  // The projects the phone offers in its NEW picker, in the same order the
+  // sidebar shows them so the two surfaces agree on "the first project".
+  const codexMicroProjects = useMemo(
+    () =>
+      orderedProjects.map((project) => ({
+        id: encodeCodexMicroProject(project.environmentId, project.id),
+        title: project.title,
+      })),
+    [orderedProjects],
+  );
+
+  // NEW resolves to the project the user picked on the board. An id this
+  // client no longer knows (a project removed while the picker was open)
+  // falls back to the contextual default rather than doing nothing.
+  const startCodexMicroNewThreadInProject = useCallback(
+    (encodedProjectId: string) => {
+      const decoded = decodeCodexMicroProject(encodedProjectId);
+      const project = decoded
+        ? orderedProjects.find(
+            (candidate) =>
+              candidate.id === decoded.projectId &&
+              candidate.environmentId === decoded.environmentId,
+          )
+        : undefined;
+      if (!project) {
+        startCodexMicroNewThread();
+        return;
+      }
+      void handleNewThread(scopeProjectRef(project.environmentId, project.id));
+    },
+    [handleNewThread, orderedProjects, startCodexMicroNewThread],
+  );
+
+  // Keep the new-thread action mounted across every route, including
+  // Settings. Codex Micro commands must leave Settings and navigate into the
+  // new draft instead of relying on a listener that only exists on chat
+  // routes.
+  useEffect(() => {
+    window.addEventListener(CODEX_MICRO_NEW_THREAD_EVENT, startCodexMicroNewThread);
+    return () => {
+      window.removeEventListener(CODEX_MICRO_NEW_THREAD_EVENT, startCodexMicroNewThread);
+    };
+  }, [startCodexMicroNewThread]);
 
   useEffect(() => {
     if (!isElectron) return;
+    let reconnectInterval: number | null = null;
     const restore = () => {
       if (document.visibilityState === "visible") {
         void codexMicroRemote.restore();
       }
     };
-    restore();
-    const reconnectInterval = window.setInterval(restore, 10_000);
+    const stopReconnectInterval = () => {
+      if (reconnectInterval === null) return;
+      window.clearInterval(reconnectInterval);
+      reconnectInterval = null;
+    };
+    const startReconnectInterval = () => {
+      if (reconnectInterval !== null || document.visibilityState !== "visible") return;
+      restore();
+      reconnectInterval = window.setInterval(restore, 10_000);
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") startReconnectInterval();
+      else stopReconnectInterval();
+    };
+    startReconnectInterval();
     window.addEventListener("focus", restore);
     window.addEventListener("pageshow", restore);
-    document.addEventListener("visibilitychange", restore);
+    document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
-      window.clearInterval(reconnectInterval);
+      stopReconnectInterval();
       window.removeEventListener("focus", restore);
       window.removeEventListener("pageshow", restore);
-      document.removeEventListener("visibilitychange", restore);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, []);
 
@@ -252,9 +260,57 @@ export function CodexMicroController() {
     };
   }, []);
 
+  useEffect(
+    () =>
+      subscribeCodexMicroAutoPinRequests((target) => {
+        setPendingAutoPins((current) =>
+          current.includes(target) ? current : [...current, target],
+        );
+      }),
+    [],
+  );
+
+  // Pin bookkeeping runs on every client (plain web included), not just
+  // where the Codex Micro hardware is attached. Reconciliation drops a pin
+  // only when its thread is positively archived — a thread that is briefly
+  // missing from the shell list (environment reconnecting, snapshot
+  // refreshing) keeps its pin, so transient loads can never erode the
+  // persisted layout.
+  useEffect(() => {
+    if (!threadsBootstrapped) return;
+    const pins = readCodexMicroPins();
+    const availableTargetIds = new Set(
+      threads
+        .filter((thread) => thread.archivedAt === null)
+        .map((thread) => encodeCodexMicroTarget(thread.environmentId, thread.id)),
+    );
+    const archivedTargetIds = new Set(
+      threads
+        .filter((thread) => thread.archivedAt !== null)
+        .map((thread) => encodeCodexMicroTarget(thread.environmentId, thread.id)),
+    );
+    const reconciledPins = reconcileCodexMicroPins(pins, archivedTargetIds);
+    let pinsChanged = pins.some((pin, index) => pin !== reconciledPins[index]);
+    const autoPinResult = applyCodexMicroAutoPins(
+      reconciledPins,
+      pendingAutoPins,
+      availableTargetIds,
+    );
+    pinsChanged ||= reconciledPins.some((pin, index) => pin !== autoPinResult.pins[index]);
+
+    if (autoPinResult.handledTargets.length > 0) {
+      const handled = new Set(autoPinResult.handledTargets);
+      setPendingAutoPins((current) => current.filter((target) => !handled.has(target)));
+    }
+
+    if (pinsChanged) {
+      writeCodexMicroPins(autoPinResult.pins);
+    }
+  }, [pendingAutoPins, pinsRevision, threads, threadsBootstrapped]);
+
   useEffect(() => {
     if (!isElectron) return;
-    let pins = readPins();
+    const pins = readCodexMicroPins();
     const targets = [...threads]
       .filter((thread) => thread.archivedAt === null)
       .sort((left, right) => {
@@ -270,7 +326,10 @@ export function CodexMicroController() {
         provider: "t3" as const,
         active: encodeCodexMicroTarget(thread.environmentId, thread.id) === selected,
         nativeVoice: false as const,
-        status: statusForThread(thread),
+        status: statusForThread(
+          thread,
+          threadLastVisitedAtById[scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))],
+        ),
       }));
     const previousState = codexMicroRemote.getWorkspaceState();
     const previousTargets =
@@ -281,35 +340,19 @@ export function CodexMicroController() {
         : [];
     const stableTargets = [
       ...targets,
-      ...previousTargets.map((target) => ({ ...target, status: "idle" })),
+      ...previousTargets.map((target) => ({ ...target, status: "idle" as const })),
     ];
-
-    const availableTargetIds = new Set(stableTargets.map((target) => target.id));
-    const compactPins = pins.filter(
-      (pin): pin is string => typeof pin === "string" && availableTargetIds.has(pin),
-    );
-    const reconciledPins = Array.from(
-      { length: SLOT_COUNT },
-      (_, index) => compactPins[index] ?? null,
-    );
-    if (pins.some((pin, index) => pin !== reconciledPins[index])) {
-      pins = reconciledPins;
-      writePins(pins);
-    }
-
-    if (pins.every((pin) => pin === null) && targets.length > 0) {
-      pins = Array.from({ length: SLOT_COUNT }, (_, index) => targets[index]?.id ?? null);
-      writePins(pins);
-    }
 
     const targetById = new Map(stableTargets.map((target) => [target.id, target]));
     const slots = pins.map((pin, index) => {
       if (!pin) return { id: index, c: 0, b: 0, e: 0, s: 0, status: "off" };
       const target = targetById.get(pin);
       if (!target) {
-        return document.hidden && previousState?.slots[index]
-          ? previousState.slots[index]
-          : { id: index, c: 0, b: 0, e: 0, s: 0, status: "off" };
+        // A pin whose thread is momentarily absent (environment reconnecting,
+        // shell snapshot refreshing) must not blink the key off: real removals
+        // drop the pin itself, so a missing shell is always transient. Reuse
+        // the last published slot state until the thread returns.
+        return previousState?.slots[index] ?? { id: index, c: 0, b: 0, e: 0, s: 0, status: "off" };
       }
       return slotForStatus(index, target.status, pin === selected);
     });
@@ -321,6 +364,7 @@ export function CodexMicroController() {
       lightingBrightness: preferences.brightness / 100,
       autoDimSeconds: preferences.autoDimSeconds,
       targets: stableTargets.map(({ status: _, ...target }) => target),
+      projects: codexMicroProjects,
       pins,
       ...(selected ? { selected } : {}),
       nativeVoiceActive,
@@ -342,7 +386,16 @@ export function CodexMicroController() {
     codexMicroRemote.setWorkspaceState(
       nativeVoiceIssue ? { ...state, issue: nativeVoiceIssue } : state,
     );
-  }, [nativeVoiceActive, nativeVoiceIssue, pinsRevision, preferences, selected, threads]);
+  }, [
+    codexMicroProjects,
+    nativeVoiceActive,
+    nativeVoiceIssue,
+    pinsRevision,
+    preferences,
+    selected,
+    threadLastVisitedAtById,
+    threads,
+  ]);
 
   useEffect(() => {
     if (!isElectron) return;
@@ -358,21 +411,18 @@ export function CodexMicroController() {
             ? command.target
             : selected;
         if (!target) return;
-        const pins = readPins();
-        const existing = pins.indexOf(target);
-        if (existing >= 0) {
-          pins[existing] = null;
-        } else {
-          const free = pins.indexOf(null);
-          if (free < 0) return;
-          pins[free] = target;
-        }
-        writePins(pins);
+        toggleCodexMicroPin(target);
         return;
       }
 
       if (command.cmd === "vscodeNew") {
-        window.dispatchEvent(new Event(CODEX_MICRO_NEW_THREAD_EVENT));
+        // Newer phone builds send the project chosen in the board's picker.
+        // Older ones send nothing and keep the contextual-default behaviour.
+        if (typeof command.project === "string" && command.project.length > 0) {
+          startCodexMicroNewThreadInProject(command.project);
+          return;
+        }
+        startCodexMicroNewThread();
         return;
       }
 
@@ -394,28 +444,52 @@ export function CodexMicroController() {
           setNativeVoiceIssue("macOS Dictation is unavailable in this T3 Code build.");
           return;
         }
-        void setMacDictation(requestedActive).then((result) => {
-          setNativeVoiceActive(result.active);
-          setNativeVoiceIssue(result.error);
-          if (
-            !requestedActive &&
-            command.autoSend === true &&
-            result.error === null &&
-            result.active === false
-          ) {
-            window.setTimeout(() => dispatchChatCommand({ kind: "send" }), 700);
-          }
-        });
+        if (requestedActive) dispatchChatCommand({ kind: "focusComposer" });
+        window.setTimeout(
+          () =>
+            void setMacDictation(requestedActive)
+              .then((result) => {
+                setNativeVoiceActive(result.active);
+                setNativeVoiceIssue(result.error);
+                if (
+                  !requestedActive &&
+                  command.autoSend === true &&
+                  result.error === null &&
+                  result.active === false
+                ) {
+                  window.setTimeout(() => dispatchChatCommand({ kind: "send" }), 700);
+                }
+              })
+              .catch(() => {
+                setNativeVoiceActive(false);
+                setNativeVoiceIssue("T3 Code could not reach macOS Dictation.");
+              }),
+          requestedActive ? 100 : 0,
+        );
         return;
       }
 
       if (command.cmd !== "vscodeKey") return;
       const key = typeof command.k === "string" ? command.k : "";
       const actionValue = Number(command.act ?? 1);
-      if ((key === "ENC_CW" || key === "ENC_CC") && actionValue === 2) {
+      // The dial emits two streams at once: a coarse detent (one per 90° of
+      // turn) and a fine scroll tick (one per 15°). The setting picks which
+      // stream is live, so switching the dial's job needs no phone-side
+      // preference and no round-trip — the unused stream is simply dropped.
+      if (key === "ENC_CW" || key === "ENC_CC") {
+        if (preferences.dialFunction !== "effort") return;
         dispatchChatCommand({
           kind: "effort",
           direction: key === "ENC_CC" ? 1 : -1,
+        });
+        return;
+      }
+      if (key === "ENC_SCROLL_CW" || key === "ENC_SCROLL_CC") {
+        if (preferences.dialFunction !== "scroll") return;
+        dispatchChatCommand({
+          kind: "scroll",
+          // Clockwise always means "forward": down the transcript.
+          direction: key === "ENC_SCROLL_CC" ? 1 : -1,
         });
         return;
       }
@@ -424,15 +498,10 @@ export function CodexMicroController() {
       if (key.startsWith("AG")) {
         const requestedIndex =
           typeof command.ag === "number" ? command.ag : Number.parseInt(key.slice(2), 10);
-        const pin = readPins()[requestedIndex] ?? null;
+        const pin = readCodexMicroPins()[requestedIndex] ?? null;
         const target = pin ? decodeCodexMicroTarget(pin) : null;
         if (!target) return;
-        void navigate({
-          to: "/$environmentId/$threadId",
-          params: buildThreadRouteParams(
-            scopeThreadRef(target.environmentId as EnvironmentId, target.threadId as ThreadId),
-          ),
-        });
+        openThreadTarget(target.environmentId, target.threadId);
         return;
       }
 
@@ -443,17 +512,29 @@ export function CodexMicroController() {
         JOY_LEFT: "left",
       }[key] as keyof typeof preferences.joystick | undefined;
       if (joystickDirection) {
-        runAction(preferences.joystick[joystickDirection], selected, navigate, toggleSidebar);
+        runAction(
+          preferences.joystick[joystickDirection],
+          selected,
+          navigate,
+          toggleSidebar,
+          startCodexMicroNewThread,
+        );
         return;
       }
       if (key === "ENC") {
-        dispatchChatCommand({ kind: "modelPicker" });
+        dispatchChatCommand({ kind: "effort", direction: 1 });
         return;
       }
 
       const actionIndex = ["ACT06", "ACT07", "ACT08", "ACT09"].indexOf(key);
       if (actionIndex >= 0) {
-        runAction(preferences.actionKeys[actionIndex]!, selected, navigate, toggleSidebar);
+        runAction(
+          preferences.actionKeys[actionIndex]!,
+          selected,
+          navigate,
+          toggleSidebar,
+          startCodexMicroNewThread,
+        );
         return;
       }
       if (key === "ACT12") dispatchChatCommand({ kind: "send" });
@@ -466,12 +547,7 @@ export function CodexMicroController() {
       }
       if (command.kind === "focus") {
         if (command.environmentId && command.threadId) {
-          void navigate({
-            to: "/$environmentId/$threadId",
-            params: buildThreadRouteParams(
-              scopeThreadRef(command.environmentId as EnvironmentId, command.threadId as ThreadId),
-            ),
-          });
+          openThreadTarget(command.environmentId, command.threadId);
         }
         return;
       }
@@ -482,7 +558,7 @@ export function CodexMicroController() {
             dispatchChatCommand({ kind: command.action });
             break;
           case "new":
-            window.dispatchEvent(new Event(CODEX_MICRO_NEW_THREAD_EVENT));
+            startCodexMicroNewThread();
             break;
           case "fork":
             dispatchChatCommand({ kind: "fork" });
@@ -512,7 +588,15 @@ export function CodexMicroController() {
       unsubscribeBluetooth();
       unsubscribeDesktop?.();
     };
-  }, [navigate, preferences, selected, toggleSidebar]);
+  }, [
+    navigate,
+    openThreadTarget,
+    preferences,
+    selected,
+    startCodexMicroNewThread,
+    startCodexMicroNewThreadInProject,
+    toggleSidebar,
+  ]);
 
   return null;
 }

@@ -15,8 +15,12 @@ export type CodexMicroCommand = {
 };
 
 export function encodeReports(channel: number, value: unknown): ReadonlyArray<Uint8Array> {
+  // Newline-terminated, matching the Mac companion. The phone frames on "\n":
+  // without a delimiter it falls back to "buffer until the bytes happen to
+  // parse as JSON", where one dropped BLE fragment corrupts every later frame
+  // on that connection instead of costing only the frame it belonged to.
   const encoded = new TextEncoder().encode(
-    typeof value === "string" ? value : JSON.stringify(value),
+    `${typeof value === "string" ? value : JSON.stringify(value)}\n`,
   );
   const reports: Uint8Array[] = [];
 

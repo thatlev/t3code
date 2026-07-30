@@ -7,7 +7,6 @@ import {
   FolderPlusIcon,
   Globe2Icon,
   LoaderIcon,
-  PinIcon,
   SearchIcon,
   SquarePenIcon,
   TerminalIcon,
@@ -22,6 +21,7 @@ import {
   ThreadStatusLabel,
   ThreadWorktreeIndicator,
 } from "./ThreadStatusIndicators";
+import { CodexMicroPinButton } from "./CodexMicroPinButton";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { useAtomValue } from "@effect/atom-react";
 import { autoAnimate } from "@formkit/auto-animate";
@@ -62,11 +62,7 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import {
-  encodeCodexMicroTarget,
-  useCodexMicroIsPinned,
-  useCodexMicroPinnedTargets,
-} from "../codexMicro/controller";
+import { encodeCodexMicroTarget, useCodexMicroPinnedTargets } from "../codexMicro/controller";
 import { useLocation, useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import {
   MAX_SIDEBAR_THREAD_PREVIEW_COUNT,
@@ -79,14 +75,19 @@ import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { isElectron } from "../env";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
+import {
+  handleThreadTearOffDragEnd,
+  handleThreadTearOffDragStart,
+  isThreadTearOffSupported,
+} from "../lib/threadWindowTearOff";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isMacPlatform } from "../lib/utils";
 import {
   readThreadShell,
   useProject,
   useProjects,
-  useThreadShells,
-  useThreadShellsForProjectRefs,
+  useVisibleThreadShells,
+  useVisibleThreadShellsForProjectRefs,
 } from "../state/entities";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
@@ -374,7 +375,6 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   } = props;
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
-  const isCodexMicroPinned = useCodexMicroIsPinned(thread.environmentId, thread.id);
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
   const runningTerminalIds = useThreadRunningTerminalIds({
@@ -493,6 +493,14 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
       handleThreadClick(event, threadRef, orderedProjectThreadKeys);
     },
     [handleThreadClick, orderedProjectThreadKeys, threadRef],
+  );
+  // Drag a chat off the sidebar and release it over the desktop to tear it out
+  // into its own window; releasing anywhere over the app does nothing.
+  const handleRowDragStart = useCallback(
+    (event: React.DragEvent) => {
+      handleThreadTearOffDragStart(event, { threadRef });
+    },
+    [threadRef],
   );
   const handleRowDoubleClick = useCallback(
     (event: React.MouseEvent) => {
@@ -681,18 +689,20 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
           isActive,
           isSelected,
         })} relative isolate`}
+        draggable={isThreadTearOffSupported && renamingThreadKey !== threadKey}
+        onDragStart={handleRowDragStart}
+        onDragEnd={handleThreadTearOffDragEnd}
         onClick={handleRowClick}
         onDoubleClick={handleRowDoubleClick}
         onKeyDown={handleRowKeyDown}
         onContextMenu={handleRowContextMenu}
       >
         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
-          {isCodexMicroPinned ? (
-            <PinIcon
-              className="size-3 shrink-0 text-violet-500"
-              aria-label="Pinned to Codex Micro"
-            />
-          ) : null}
+          <CodexMicroPinButton
+            environmentId={thread.environmentId}
+            threadId={thread.id}
+            hoverGroup="sidebar"
+          />
           {prStatus && (
             <Tooltip>
               <TooltipTrigger
@@ -1178,7 +1188,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     },
   });
   const openPrLink = useOpenPrLink();
-  const sidebarThreads = useThreadShellsForProjectRefs(project.memberProjectRefs);
+  const sidebarThreads = useVisibleThreadShellsForProjectRefs(project.memberProjectRefs);
   const sidebarThreadByKey = useMemo(
     () =>
       new Map(
@@ -2060,6 +2070,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             : []),
           { id: "rename", label: "Rename thread" },
           { id: "mark-unread", label: "Mark unread" },
+          {
+            id: "archive",
+            label: "Archive thread",
+            disabled: thread.session?.status === "running",
+          },
           { id: "copy-path", label: "Copy Path" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
           { id: "delete", label: "Delete", destructive: true, icon: "trash" },
@@ -2098,6 +2113,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
       if (clicked === "mark-unread") {
         markThreadUnread(threadKey, thread.latestTurn?.completedAt);
+        return;
+      }
+      if (clicked === "archive") {
+        if (appSettingsConfirmThreadArchive) {
+          const confirmed = await api.dialogs.confirm(`Archive thread "${thread.title}"?`);
+          if (!confirmed) return;
+        }
+        await attemptArchiveThread(threadRef);
         return;
       }
       if (clicked === "copy-path") {
@@ -2143,7 +2166,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       }
     },
     [
+      appSettingsConfirmThreadArchive,
       appSettingsConfirmThreadDelete,
+      attemptArchiveThread,
       copyPathToClipboard,
       copyThreadIdToClipboard,
       deleteThread,
@@ -2938,7 +2963,7 @@ export default function Sidebar() {
     () => projects.filter((project) => !isArchivedProject(archivedProjectKeySet, project)),
     [archivedProjectKeySet, projects],
   );
-  const sidebarThreads = useThreadShells();
+  const sidebarThreads = useVisibleThreadShells();
   const codexMicroPinnedTargets = useCodexMicroPinnedTargets();
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const projectOrder = useUiStateStore((store) => store.projectOrder);

@@ -14,6 +14,11 @@ import { useCallback, useMemo, useRef } from "react";
 
 import { getFallbackThreadIdAfterDelete } from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
+import {
+  pinCodexMicroTarget,
+  removeCodexMicroPin,
+  unpinCodexMicroTargetForSettlement,
+} from "../codexMicro/pins";
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
@@ -224,6 +229,7 @@ export function useThreadActions() {
           input: { threadId: target.threadId },
         });
         if (result._tag === "Success") {
+          removeCodexMicroPin(target.environmentId, target.threadId);
           refreshArchivedThreadsForEnvironment(target.environmentId);
         }
         return result;
@@ -307,6 +313,7 @@ export function useThreadActions() {
       if (deleteResult._tag === "Failure") {
         return deleteResult;
       }
+      removeCodexMicroPin(threadRef.environmentId, threadRef.threadId);
       refreshArchivedThreadsForEnvironment(threadRef.environmentId);
       clearComposerDraftForThread(threadRef);
       clearProjectDraftThreadById(
@@ -442,10 +449,14 @@ export function useThreadActions() {
       }
       // Settle is a high-frequency lifecycle action and stays silent — no
       // toast.
-      return settleThreadMutation({
+      const result = await settleThreadMutation({
         environmentId: target.environmentId,
         input: { threadId: target.threadId },
       });
+      if (result._tag === "Success") {
+        unpinCodexMicroTargetForSettlement(target.environmentId, target.threadId);
+      }
+      return result;
     },
     [resolveThreadTarget, settleThreadMutation],
   );
@@ -464,10 +475,14 @@ export function useThreadActions() {
       }
       // reason "user" pins the thread active: auto-settle (PR merged /
       // inactivity) stays suppressed until real activity clears the pin.
-      return unsettleThreadMutation({
+      const result = await unsettleThreadMutation({
         environmentId: target.environmentId,
         input: { threadId: target.threadId, reason: "user" },
       });
+      if (result._tag === "Success") {
+        pinCodexMicroTarget(target.environmentId, target.threadId);
+      }
+      return result;
     },
     [unsettleThreadMutation],
   );
