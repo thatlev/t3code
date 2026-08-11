@@ -1,12 +1,12 @@
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 
 import ChatView from "../components/ChatView";
 import { threadHasStarted } from "../components/ChatView.logic";
 import { finalizePromotedDraftThreadByRef, useComposerDraftStore } from "../composerDraftStore";
 import { resolveThreadRouteRef, resolveThreadRouteRenderState } from "../threadRoutes";
-import { claimThreadForThisWindow, useIsThreadInWindowScope } from "../threadWindowScope";
+import { resolveThreadSyncPhase } from "../threadSync";
 import { SidebarInset } from "~/components/ui/sidebar";
 import {
   useEnvironmentThreadRefs,
@@ -16,6 +16,7 @@ import {
 } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
 import { environmentShell } from "../state/shell";
+import { claimThreadForThisWindow, useIsThreadInWindowScope } from "../threadWindowScope";
 
 function ChatThreadRouteView() {
   const navigate = useNavigate();
@@ -52,24 +53,22 @@ function ChatThreadRouteView() {
     serverThreadDetailDeleted: serverThreadStatus === "deleted",
     draftThreadExists,
   });
+  const threadSyncPhase = resolveThreadSyncPhase({
+    detailExists: serverThreadDetail !== null,
+    shellExists: serverThreadShell !== null,
+    status: serverThreadStatus,
+  });
   const serverThreadStarted = threadHasStarted(serverThreadDetail);
   const environmentHasAnyThreads = environmentHasServerThreads || environmentHasDraftThreads;
 
-  // Showing a chat is what makes a window own it: opening one here moves it out
-  // of whatever window held it before, and losing it (because another window
-  // took it, typically by tearing it off) sends this window back to its list.
   useEffect(() => {
-    if (threadKey === null) {
-      return;
-    }
-    claimThreadForThisWindow(threadKey);
+    if (threadKey !== null) claimThreadForThisWindow(threadKey);
   }, [threadKey]);
 
   useEffect(() => {
-    if (threadKey === null || threadInWindowScope) {
-      return;
+    if (threadKey !== null && !threadInWindowScope) {
+      void navigate({ to: "/", replace: true });
     }
-    void navigate({ to: "/", replace: true });
   }, [navigate, threadInWindowScope, threadKey]);
 
   useEffect(() => {
@@ -89,17 +88,20 @@ function ChatThreadRouteView() {
     finalizePromotedDraftThreadByRef(threadRef);
   }, [draftThread, serverThreadStarted, threadRef]);
 
-  if (!threadRef || renderState !== "ready") {
+  if (!threadRef) {
     return null;
   }
 
   return (
     <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground md:h-dvh">
-      <ChatView
-        environmentId={threadRef.environmentId}
-        threadId={threadRef.threadId}
-        routeKind="server"
-      />
+      {renderState === "ready" || (renderState === "loading" && serverThreadShell !== null) ? (
+        <ChatView
+          environmentId={threadRef.environmentId}
+          threadId={threadRef.threadId}
+          routeKind="server"
+          threadSyncPhase={threadSyncPhase}
+        />
+      ) : null}
     </SidebarInset>
   );
 }

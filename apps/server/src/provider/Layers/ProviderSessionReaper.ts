@@ -11,30 +11,14 @@ import {
   ProviderSessionReaper,
   type ProviderSessionReaperShape,
 } from "../Services/ProviderSessionReaper.ts";
+import { forkParked } from "../../serverActivation.ts";
 import { ProviderService } from "../Services/ProviderService.ts";
 
-/**
- * An idle provider session keeps a CLI process, SDK stream, and MCP
- * connections resident. Hibernating it is safe once its resume cursor is
- * durable, but restarting can still add noticeable latency to the next turn,
- * so inactivity must be measured from the latest projected session activity
- * rather than only from the directory binding's original heartbeat.
- */
-const DEFAULT_INACTIVITY_THRESHOLD_MS = 5 * 60 * 1000;
-
-/**
- * Settling a thread is the user saying "I am done with this one for now", so
- * an explicitly settled session hibernates almost immediately instead of
- * waiting out the general threshold. The short grace still absorbs the case
- * where a thread is settled and then immediately reopened.
- */
-const DEFAULT_SETTLED_INACTIVITY_THRESHOLD_MS = 60 * 1000;
-
-const DEFAULT_SWEEP_INTERVAL_MS = 60 * 1000;
+const DEFAULT_INACTIVITY_THRESHOLD_MS = 30 * 60 * 1000;
+const DEFAULT_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
 export interface ProviderSessionReaperLiveOptions {
   readonly inactivityThresholdMs?: number;
-  readonly settledInactivityThresholdMs?: number;
   readonly sweepIntervalMs?: number;
 }
 
@@ -48,14 +32,7 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
       1,
       options?.inactivityThresholdMs ?? DEFAULT_INACTIVITY_THRESHOLD_MS,
     );
-    const settledInactivityThresholdMs = Math.max(
-      1,
-      options?.settledInactivityThresholdMs ?? DEFAULT_SETTLED_INACTIVITY_THRESHOLD_MS,
-    );
     const sweepIntervalMs = Math.max(1, options?.sweepIntervalMs ?? DEFAULT_SWEEP_INTERVAL_MS);
-    // Cheap pre-filter so an obviously-fresh binding never costs a projection
-    // read; the binding's own threshold is applied once we know the thread.
-    const minimumThresholdMs = Math.min(inactivityThresholdMs, settledInactivityThresholdMs);
 
     const sweep = Effect.gen(function* () {
       const bindings = yield* directory.listBindings();
@@ -77,8 +54,8 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
           continue;
         }
 
-        const bindingIdleDurationMs = now - lastSeenMs;
-        if (bindingIdleDurationMs < minimumThresholdMs) {
+        const idleDurationMs = now - lastSeenMs;
+        if (idleDurationMs < inactivityThresholdMs) {
           continue;
         }
 
@@ -89,21 +66,21 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
           yield* Effect.logDebug("provider.session.reaper.skipped-active-turn", {
             threadId: binding.threadId,
             activeTurnId: thread.session.activeTurnId,
-            idleDurationMs: bindingIdleDurationMs,
+            idleDurationMs,
           });
           continue;
         }
 
-        const projectedSessionUpdatedAtMs = thread?.session?.updatedAt
-          ? Date.parse(thread.session.updatedAt)
-          : Number.NaN;
-        const latestActivityMs = Number.isNaN(projectedSessionUpdatedAtMs)
-          ? lastSeenMs
-          : Math.max(lastSeenMs, projectedSessionUpdatedAtMs);
-        const idleDurationMs = now - latestActivityMs;
-        const isSettled = thread?.settledOverride === "settled";
-        const thresholdMs = isSettled ? settledInactivityThresholdMs : inactivityThresholdMs;
-        if (idleDurationMs < thresholdMs) {
+        // The turn can settle while background work runs on (subagent
+        // fleets, workflow runs, Monitor watch loops). Those live inside the
+        // provider process, so stopping the session would kill them silently,
+        // and nothing bumps lastSeenAt between turns.
+        if (thread?.backgroundLiveness != null) {
+          yield* Effect.logDebug("provider.session.reaper.skipped-background-work", {
+            threadId: binding.threadId,
+            backgroundLiveness: thread.backgroundLiveness,
+            idleDurationMs,
+          });
           continue;
         }
 
@@ -113,7 +90,7 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
               threadId: binding.threadId,
               provider: binding.provider,
               idleDurationMs,
-              reason: isSettled ? "settled_thread" : "inactivity_threshold",
+              reason: "inactivity_threshold",
             }),
           ),
           Effect.as(true),
@@ -142,7 +119,7 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
 
     const start: ProviderSessionReaperShape["start"] = () =>
       Effect.gen(function* () {
-        yield* Effect.forkScoped(
+        yield* forkParked(
           sweep.pipe(
             Effect.catch((error: unknown) =>
               Effect.logWarning("provider.session.reaper.sweep-failed", {
@@ -160,7 +137,6 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
 
         yield* Effect.logInfo("provider.session.reaper.started", {
           inactivityThresholdMs,
-          settledInactivityThresholdMs,
           sweepIntervalMs,
         });
       });

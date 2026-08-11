@@ -11,7 +11,7 @@ import { cn } from "../lib/utils";
 type CodexMicroPinButtonProps = {
   readonly environmentId: string;
   readonly threadId: string;
-  readonly hoverGroup: "sidebar" | "sidebar-v2";
+  readonly hoverGroup: "sidebar" | "sidebar-v2" | "sidebar-row";
 };
 
 export function CodexMicroPinButton({
@@ -24,7 +24,9 @@ export function CodexMicroPinButton({
   const revealClassName =
     hoverGroup === "sidebar-v2"
       ? "group-hover/v2-row:pointer-events-auto group-hover/v2-row:opacity-100 group-focus-within/v2-row:pointer-events-auto group-focus-within/v2-row:opacity-100"
-      : "group-hover/menu-sub-item:pointer-events-auto group-hover/menu-sub-item:opacity-100 group-focus-within/menu-sub-item:pointer-events-auto group-focus-within/menu-sub-item:opacity-100";
+      : hoverGroup === "sidebar-row"
+        ? "group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100 group-focus-within/sidebar-row:pointer-events-auto group-focus-within/sidebar-row:opacity-100"
+        : "group-hover/menu-sub-item:pointer-events-auto group-hover/menu-sub-item:opacity-100 group-focus-within/menu-sub-item:pointer-events-auto group-focus-within/menu-sub-item:opacity-100";
 
   const handlePointerDown = (event: PointerEvent<HTMLButtonElement>) => {
     event.stopPropagation();

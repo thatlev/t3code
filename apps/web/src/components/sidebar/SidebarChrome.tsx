@@ -1,13 +1,17 @@
-import { useAtomValue } from "@effect/atom-react";
-import { ArchiveIcon, Grid3X3Icon, SettingsIcon } from "lucide-react";
+import { ChartNoAxesColumnIcon, GitPullRequestIcon, SettingsIcon } from "lucide-react";
 import { memo, useCallback } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 
-import { APP_STAGE_LABEL } from "../../branding";
+import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
-import { primaryServerConfigAtom } from "../../state/server";
-import { resolveSidebarStageBadgeLabel } from "../Sidebar.logic";
-import { SidebarStageBackdrop, resolveSidebarStageBackdropVariant } from "../SidebarStageBackdrop";
+import { usePrimaryEnvironment } from "../../state/environments";
+import {
+  resolveEnvironmentIdentificationPillLabel,
+  resolveSidebarStageBackdropVariant,
+  SidebarStageBackdrop,
+  useEnvironmentStageLabel,
+} from "../SidebarStageBackdrop";
+import { Badge } from "../ui/badge";
 import {
   SidebarFooter,
   SidebarHeader,
@@ -25,8 +29,16 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
 }: {
   isElectron: boolean;
 }) {
-  const stageLabel = useSidebarStageLabel();
-  const backdropVariant = resolveSidebarStageBackdropVariant(stageLabel);
+  const stageLabel = useEnvironmentStageLabel();
+  const environmentIdentificationMode = useEnvironmentIdentificationMode();
+  const backdropVariant = resolveSidebarStageBackdropVariant(
+    stageLabel,
+    environmentIdentificationMode === "artwork",
+  );
+  const pillLabel =
+    environmentIdentificationMode === "pill"
+      ? resolveEnvironmentIdentificationPillLabel(stageLabel)
+      : null;
 
   return (
     <SidebarHeader
@@ -44,6 +56,16 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
         )}
       />
       <SidebarBrand onBackdrop={backdropVariant !== null} />
+      {pillLabel ? (
+        <Badge
+          className="relative z-10 ml-1 rounded-full px-1.5 text-muted-foreground"
+          data-environment-identification="pill"
+          size="sm"
+          variant="secondary"
+        >
+          {pillLabel}
+        </Badge>
+      ) : null}
     </SidebarHeader>
   );
 });
@@ -71,16 +93,6 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
   );
 }
 
-function useSidebarStageLabel() {
-  const primaryServerVersion =
-    useAtomValue(primaryServerConfigAtom)?.environment.serverVersion ?? null;
-
-  return resolveSidebarStageBadgeLabel({
-    primaryServerVersion,
-    fallbackStageLabel: APP_STAGE_LABEL,
-  });
-}
-
 function T3Wordmark() {
   return (
     <svg
@@ -100,57 +112,53 @@ function T3Wordmark() {
 export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
+  const primaryEnvironment = usePrimaryEnvironment();
+  const pullRequestsSupported =
+    primaryEnvironment?.serverConfig?.environment.capabilities.pullRequests === true;
+  const closeMobileSidebar = useCallback(() => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+  }, [isMobile, setOpenMobile]);
+  const handlePullRequestsClick = useCallback(() => {
+    closeMobileSidebar();
+    void navigate({ to: "/pull-requests", search: { involvement: "all", state: "open" } });
+  }, [closeMobileSidebar, navigate]);
   const handleSettingsClick = useCallback(() => {
-    if (isMobile) {
-      setOpenMobile(false);
-    }
+    closeMobileSidebar();
     void navigate({ to: "/settings" });
-  }, [isMobile, navigate, setOpenMobile]);
-  const handleArchiveClick = useCallback(() => {
+  }, [closeMobileSidebar, navigate]);
+
+  const handleUsageClick = useCallback(() => {
     if (isMobile) {
       setOpenMobile(false);
     }
-    void navigate({ to: "/settings/archived" });
-  }, [isMobile, navigate, setOpenMobile]);
-  const handleCodexMicroClick = useCallback(() => {
-    if (isMobile) {
-      setOpenMobile(false);
-    }
-    void navigate({ to: "/settings/codex-micro" });
+    void navigate({ to: "/usage" });
   }, [isMobile, navigate, setOpenMobile]);
 
   return (
-    <SidebarFooter className="p-2">
+    <SidebarFooter className="p-[var(--sidebar-content-inset)]">
       <SidebarProviderUpdatePill />
       <SidebarUpdatePill />
       <SidebarMenu>
+        {pullRequestsSupported ? (
+          <SidebarMenuItem>
+            <SidebarMenuButton onClick={handlePullRequestsClick}>
+              <GitPullRequestIcon />
+              <span>Pull Requests</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        ) : null}
         <SidebarMenuItem>
-          <SidebarMenuButton
-            size="sm"
-            className="h-8 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-            onClick={handleArchiveClick}
-          >
-            <ArchiveIcon className="size-4.5 shrink-0" />
-            <span>Archive</span>
+          <SidebarMenuButton onClick={handleUsageClick}>
+            <ChartNoAxesColumnIcon />
+            <span>Usage</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
-        <SidebarMenuItem className="flex items-center gap-1">
-          <SidebarMenuButton
-            size="sm"
-            className="h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-            onClick={handleSettingsClick}
-          >
-            <SettingsIcon className="size-4.5 shrink-0" />
+        <SidebarMenuItem>
+          <SidebarMenuButton onClick={handleSettingsClick}>
+            <SettingsIcon />
             <span>Settings</span>
-          </SidebarMenuButton>
-          <SidebarMenuButton
-            size="sm"
-            className="size-8 shrink-0 justify-center rounded-md p-0 text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-            onClick={handleCodexMicroClick}
-            aria-label="Codex Micro settings"
-            title="Codex Micro settings"
-          >
-            <Grid3X3Icon className="size-4.5 shrink-0" />
           </SidebarMenuButton>
         </SidebarMenuItem>
       </SidebarMenu>
