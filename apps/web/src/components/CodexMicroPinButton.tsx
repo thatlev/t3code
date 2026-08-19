@@ -20,7 +20,7 @@ export function CodexMicroPinButton({
   hoverGroup,
 }: CodexMicroPinButtonProps) {
   const isPinned = useCodexMicroIsPinned(environmentId, threadId);
-  const label = isPinned ? "Unpin thread from Codex Micro" : "Pin thread to Codex Micro";
+  const label = isPinned ? "Unpin thread from AgentMicro" : "Pin thread to AgentMicro";
   const revealClassName =
     hoverGroup === "sidebar-v2"
       ? "group-hover/v2-row:pointer-events-auto group-hover/v2-row:opacity-100 group-focus-within/v2-row:pointer-events-auto group-focus-within/v2-row:opacity-100"

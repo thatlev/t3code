@@ -282,7 +282,11 @@ class CodexMicroRemote {
     }
     try {
       const devices = bluetooth.getDevices ? await bluetooth.getDevices() : [];
-      const saved = devices.find((device) => device.name === "Codex Micro") ?? devices[0];
+      // The phone advertises "AgentMicro"; pre-rename builds advertised
+      // "Codex Micro". Accept either so an older phone still reconnects.
+      const saved =
+        devices.find((device) => device.name === "AgentMicro" || device.name === "Codex Micro") ??
+        devices[0];
       if (saved) {
         await this.connectDevice(saved);
         return;
@@ -452,7 +456,7 @@ class CodexMicroRemote {
       this.reconnectAttempt = 0;
       this.update({
         phase: "connected",
-        deviceName: "Codex Micro",
+        deviceName: "AgentMicro",
         error: null,
       });
       // The companion may have reconnected to a different phone session, so
@@ -478,12 +482,12 @@ class CodexMicroRemote {
     this.decoder.reset();
     this.update({
       phase: "scanning",
-      deviceName: state.companionConnected ? "Codex Micro" : null,
+      deviceName: state.companionConnected ? "AgentMicro" : null,
       error:
         state.error ??
         (state.companionConnected
-          ? "Codex Micro is ready. Open the iPhone app to connect automatically."
-          : "Opening the Codex Micro menu companion…"),
+          ? "AgentMicro is ready. Open the iPhone app to connect automatically."
+          : "Opening the AgentMicro menu companion…"),
     });
   }
 
@@ -498,7 +502,7 @@ class CodexMicroRemote {
     this.clearReconnect();
     this.device = device;
     this.snapshot = { ...this.snapshot, autoReconnect: true };
-    this.update({ phase: "connecting", deviceName: device.name ?? "Codex Micro", error: null });
+    this.update({ phase: "connecting", deviceName: device.name ?? "AgentMicro", error: null });
 
     const server = await device.gatt?.connect();
     if (!server) {
@@ -509,7 +513,7 @@ class CodexMicroRemote {
     this.output = await service.getCharacteristic(CODEX_MICRO_OUTPUT_UUID);
     this.writeReport = async (report) => {
       const output = this.output;
-      if (!output) throw new Error("The Codex Micro output channel is unavailable.");
+      if (!output) throw new Error("The AgentMicro output channel is unavailable.");
       const value = report.slice().buffer;
       if (output.writeValueWithoutResponse) {
         await output.writeValueWithoutResponse(value);
@@ -521,7 +525,7 @@ class CodexMicroRemote {
     await input.startNotifications();
     device.addEventListener("gattserverdisconnected", this.handleDisconnected);
     this.reconnectAttempt = 0;
-    this.update({ phase: "connected", deviceName: device.name ?? "Codex Micro", error: null });
+    this.update({ phase: "connected", deviceName: device.name ?? "AgentMicro", error: null });
     this.notePhoneActivity();
     // A new link means the phone retained nothing: start from a full frame.
     this.lastSentWorkspaceState = null;

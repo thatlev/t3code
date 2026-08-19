@@ -299,7 +299,7 @@ function CodexMicroPreview() {
     <div className="flex justify-center border-y border-border/70 py-5">
       <div
         className="grid aspect-square w-[240px] grid-rows-4 gap-[5px] rounded-[12px] border-2 border-[#30343e] bg-[#171a20] p-[10px] shadow-[inset_0_0_0_1px_#101217]"
-        aria-label="Codex Micro control preview"
+        aria-label="AgentMicro control preview"
       >
         <div className="grid grid-cols-4 gap-[5px]">
           <DeviceKey
@@ -460,7 +460,7 @@ export function CodexMicroSettings() {
     <SettingsPageContainer className="max-w-3xl gap-12">
       <section>
         <h1 className="mb-7 text-2xl font-medium tracking-[-0.025em] text-foreground">
-          Codex Micro
+          AgentMicro
         </h1>
 
         <div className="rounded-2xl border border-border bg-card/70 px-4 sm:px-[17px]">
@@ -494,7 +494,7 @@ export function CodexMicroSettings() {
           />
           <SettingLine
             title="Automatic connection"
-            description="T3 Code uses the Codex Micro menu companion and reconnects after launch, sleep, and reloads"
+            description="T3 Code uses the AgentMicro menu companion and reconnects after launch, sleep, and reloads"
             control={
               <span className="inline-flex items-center gap-2">
                 {snapshot.phase === "unsupported" ? (
@@ -513,11 +513,11 @@ export function CodexMicroSettings() {
           />
           <SettingLine
             title="Brightness"
-            description="Adjusts the brightness of all Codex Micro lighting"
+            description="Adjusts the brightness of all AgentMicro lighting"
             control={
               <label className="flex items-center gap-4">
                 <input
-                  aria-label="Codex Micro brightness"
+                  aria-label="AgentMicro brightness"
                   className="h-4 w-36 cursor-pointer accent-foreground"
                   type="range"
                   min="0"
@@ -555,7 +555,7 @@ export function CodexMicroSettings() {
 
       <section>
         <div className="mb-4 flex items-center justify-between gap-4">
-          <h2 className="text-sm font-medium text-foreground">Codex Micro Layout</h2>
+          <h2 className="text-sm font-medium text-foreground">AgentMicro Layout</h2>
           <button
             type="button"
             className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -602,7 +602,7 @@ export function CodexMicroSettings() {
             description={`${
               CODEX_MICRO_DIAL_FUNCTIONS.find((entry) => entry.value === preferences.dialFunction)
                 ?.description ?? ""
-            } Hold to open Codex Micro settings.`}
+            } Hold to open AgentMicro settings.`}
             control={
               <SetupSelect
                 label="Knob function"
@@ -635,7 +635,7 @@ export function CodexMicroSettings() {
 
       <div className="sr-only" aria-live="polite">
         {connected
-          ? `Codex Micro connected${snapshot.deviceName ? ` to ${snapshot.deviceName}` : ""}.`
+          ? `AgentMicro connected${snapshot.deviceName ? ` to ${snapshot.deviceName}` : ""}.`
           : connectionLabel}
       </div>
     </SettingsPageContainer>
