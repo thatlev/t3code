@@ -1,6 +1,8 @@
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as Effect from "effect/Effect";
 
+import ProjectionThreadTitleRegeneration from "./035_ProjectionThreadTitleRegeneration.ts";
+
 /**
  * Repair threads whose `latest_turn_id` was erased when their session went
  * ready.
@@ -19,6 +21,11 @@ import * as Effect from "effect/Effect";
  * are left alone — only the erased ones are reconstructed.
  */
 export default Effect.gen(function* () {
+  // Fork databases may already have recorded the old repair as migration 35,
+  // which now belongs to upstream's title-regeneration columns. Reapply that
+  // idempotent migration here so those databases receive upstream's schema.
+  yield* ProjectionThreadTitleRegeneration;
+
   const sql = yield* SqlClient.SqlClient;
 
   yield* sql`

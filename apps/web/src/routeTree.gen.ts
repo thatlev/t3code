@@ -22,9 +22,9 @@ import { Route as SettingsIntegrationsRouteImport } from './routes/settings.inte
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsDiagnosticsRouteImport } from './routes/settings.diagnostics'
 import { Route as SettingsConnectionsRouteImport } from './routes/settings.connections'
-import { Route as SettingsCodexMicroRouteImport } from './routes/settings.codex-micro'
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
+import { Route as SettingsAgentMicroRouteImport } from './routes/settings.agent-micro'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
 import { Route as ConnectCallbackRouteImport } from './routes/connect_.callback'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
@@ -95,11 +95,6 @@ const SettingsConnectionsRoute = SettingsConnectionsRouteImport.update({
   path: '/connections',
   getParentRoute: () => SettingsRoute,
 } as any)
-const SettingsCodexMicroRoute = SettingsCodexMicroRouteImport.update({
-  id: '/codex-micro',
-  path: '/codex-micro',
-  getParentRoute: () => SettingsRoute,
-} as any)
 const SettingsArchivedRoute = SettingsArchivedRouteImport.update({
   id: '/archived',
   path: '/archived',
@@ -108,6 +103,11 @@ const SettingsArchivedRoute = SettingsArchivedRouteImport.update({
 const SettingsAppearanceRoute = SettingsAppearanceRouteImport.update({
   id: '/appearance',
   path: '/appearance',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsAgentMicroRoute = SettingsAgentMicroRouteImport.update({
+  id: '/agent-micro',
+  path: '/agent-micro',
   getParentRoute: () => SettingsRoute,
 } as any)
 const ProjectsProjectKeyRoute = ProjectsProjectKeyRouteImport.update({
@@ -146,9 +146,9 @@ export interface FileRoutesByFullPath {
   '/pull-requests': typeof ChatPullRequestsRoute
   '/connect/callback': typeof ConnectCallbackRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
+  '/settings/agent-micro': typeof SettingsAgentMicroRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
-  '/settings/codex-micro': typeof SettingsCodexMicroRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
@@ -167,9 +167,9 @@ export interface FileRoutesByTo {
   '/pull-requests': typeof ChatPullRequestsRoute
   '/connect/callback': typeof ConnectCallbackRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
+  '/settings/agent-micro': typeof SettingsAgentMicroRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
-  '/settings/codex-micro': typeof SettingsCodexMicroRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
@@ -191,9 +191,9 @@ export interface FileRoutesById {
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
   '/connect_/callback': typeof ConnectCallbackRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
+  '/settings/agent-micro': typeof SettingsAgentMicroRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
-  '/settings/codex-micro': typeof SettingsCodexMicroRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
@@ -216,9 +216,9 @@ export interface FileRouteTypes {
     | '/pull-requests'
     | '/connect/callback'
     | '/projects/$projectKey'
+    | '/settings/agent-micro'
     | '/settings/appearance'
     | '/settings/archived'
-    | '/settings/codex-micro'
     | '/settings/connections'
     | '/settings/diagnostics'
     | '/settings/general'
@@ -237,9 +237,9 @@ export interface FileRouteTypes {
     | '/pull-requests'
     | '/connect/callback'
     | '/projects/$projectKey'
+    | '/settings/agent-micro'
     | '/settings/appearance'
     | '/settings/archived'
-    | '/settings/codex-micro'
     | '/settings/connections'
     | '/settings/diagnostics'
     | '/settings/general'
@@ -260,9 +260,9 @@ export interface FileRouteTypes {
     | '/_chat/pull-requests'
     | '/connect_/callback'
     | '/projects/$projectKey'
+    | '/settings/agent-micro'
     | '/settings/appearance'
     | '/settings/archived'
-    | '/settings/codex-micro'
     | '/settings/connections'
     | '/settings/diagnostics'
     | '/settings/general'
@@ -378,13 +378,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsConnectionsRouteImport
       parentRoute: typeof SettingsRoute
     }
-    '/settings/codex-micro': {
-      id: '/settings/codex-micro'
-      path: '/codex-micro'
-      fullPath: '/settings/codex-micro'
-      preLoaderRoute: typeof SettingsCodexMicroRouteImport
-      parentRoute: typeof SettingsRoute
-    }
     '/settings/archived': {
       id: '/settings/archived'
       path: '/archived'
@@ -397,6 +390,13 @@ declare module '@tanstack/react-router' {
       path: '/appearance'
       fullPath: '/settings/appearance'
       preLoaderRoute: typeof SettingsAppearanceRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/agent-micro': {
+      id: '/settings/agent-micro'
+      path: '/agent-micro'
+      fullPath: '/settings/agent-micro'
+      preLoaderRoute: typeof SettingsAgentMicroRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/projects/$projectKey': {
@@ -454,9 +454,9 @@ const ChatRouteChildren: ChatRouteChildren = {
 const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)
 
 interface SettingsRouteChildren {
+  SettingsAgentMicroRoute: typeof SettingsAgentMicroRoute
   SettingsAppearanceRoute: typeof SettingsAppearanceRoute
   SettingsArchivedRoute: typeof SettingsArchivedRoute
-  SettingsCodexMicroRoute: typeof SettingsCodexMicroRoute
   SettingsConnectionsRoute: typeof SettingsConnectionsRoute
   SettingsDiagnosticsRoute: typeof SettingsDiagnosticsRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
@@ -467,9 +467,9 @@ interface SettingsRouteChildren {
 }
 
 const SettingsRouteChildren: SettingsRouteChildren = {
+  SettingsAgentMicroRoute: SettingsAgentMicroRoute,
   SettingsAppearanceRoute: SettingsAppearanceRoute,
   SettingsArchivedRoute: SettingsArchivedRoute,
-  SettingsCodexMicroRoute: SettingsCodexMicroRoute,
   SettingsConnectionsRoute: SettingsConnectionsRoute,
   SettingsDiagnosticsRoute: SettingsDiagnosticsRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,

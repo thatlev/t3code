@@ -65,11 +65,11 @@ const readRepairedThreads = Effect.gen(function* () {
   `;
 });
 
-layer("035_RepairProjectionThreadsLatestTurn", (it) => {
+layer("041_RepairProjectionThreadsLatestTurn", (it) => {
   it.effect("points erased latest turns back at the thread's most recent turn", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 34 });
+      yield* runMigrations({ toMigrationInclusive: 40 });
 
       // Erased by the old session-set projector: turns on record, no pointer.
       yield* insertThread({ threadId: "thread-erased", latestTurnId: null });
@@ -130,7 +130,7 @@ layer("035_RepairProjectionThreadsLatestTurn", (it) => {
         )
       `;
 
-      yield* runMigrations({ toMigrationInclusive: 35 });
+      yield* runMigrations({ toMigrationInclusive: 41 });
 
       assert.deepEqual(yield* readRepairedThreads, [
         { threadId: "thread-erased", latestTurnId: "turn-new", hasActionableProposedPlan: 0 },

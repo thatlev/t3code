@@ -955,6 +955,7 @@ describe("deriveWorkLogEntries", () => {
         kind: "task.progress",
         summary: "Thinking",
         payload: {
+          agentKind: "background",
           taskId: "claude-thinking:turn-1",
           detail: "Thinking · ~50 estimated tokens",
         },
@@ -965,6 +966,7 @@ describe("deriveWorkLogEntries", () => {
         kind: "task.progress",
         summary: "Thinking",
         payload: {
+          agentKind: "background",
           taskId: "claude-thinking:turn-1",
           detail: "Thinking · ~550 estimated tokens",
         },
@@ -975,6 +977,7 @@ describe("deriveWorkLogEntries", () => {
         kind: "task.completed",
         summary: "Task completed",
         payload: {
+          agentKind: "background",
           taskId: "claude-thinking:turn-1",
           summary: "Reasoned · ~550 estimated tokens",
         },

@@ -1137,6 +1137,19 @@ function shouldCollapseToolLifecycleEntries(
   previous: DerivedWorkLogEntry,
   next: DerivedWorkLogEntry,
 ): boolean {
+  const previousIsTaskLifecycle =
+    previous.activityKind === "task.progress" || previous.activityKind === "task.completed";
+  const nextIsTaskLifecycle =
+    next.activityKind === "task.progress" || next.activityKind === "task.completed";
+  if (previousIsTaskLifecycle || nextIsTaskLifecycle) {
+    return (
+      previousIsTaskLifecycle &&
+      nextIsTaskLifecycle &&
+      previous.activityKind !== "task.completed" &&
+      previous.collapseKey !== undefined &&
+      previous.collapseKey === next.collapseKey
+    );
+  }
   if (previous.activityKind !== "tool.updated" && previous.activityKind !== "tool.completed") {
     return false;
   }
