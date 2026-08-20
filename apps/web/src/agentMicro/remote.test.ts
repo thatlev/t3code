@@ -3,10 +3,10 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildWorkspaceStateFrame,
   isRedundantWorkspaceStateFrame,
-  type CodexMicroWorkspaceState,
+  type AgentMicroWorkspaceState,
 } from "./remote";
 
-function makeState(patch: Partial<CodexMicroWorkspaceState> = {}): CodexMicroWorkspaceState {
+function makeState(patch: Partial<AgentMicroWorkspaceState> = {}): AgentMicroWorkspaceState {
   return {
     type: "workspace-state",
     version: 2,

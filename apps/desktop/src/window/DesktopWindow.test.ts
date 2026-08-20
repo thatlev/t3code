@@ -136,13 +136,13 @@ function makeFakeBrowserWindow() {
   };
 }
 
-describe("Codex Micro Bluetooth device selection", () => {
+describe("AgentMicro Bluetooth device selection", () => {
   it("prefers the phone remote by its advertised name", () => {
     assert.strictEqual(
-      DesktopWindow.selectCodexMicroBluetoothDevice([
+      DesktopWindow.selectAgentMicroBluetoothDevice([
         { deviceId: "unnamed", deviceName: "" },
         { deviceId: "headphones", deviceName: "Headphones" },
-        { deviceId: "phone", deviceName: "Codex Micro" },
+        { deviceId: "phone", deviceName: "AgentMicro" },
       ]),
       "phone",
     );
@@ -150,7 +150,7 @@ describe("Codex Micro Bluetooth device selection", () => {
 
   it("accepts a service-filtered iPhone candidate using its system name", () => {
     assert.strictEqual(
-      DesktopWindow.selectCodexMicroBluetoothDevice([
+      DesktopWindow.selectAgentMicroBluetoothDevice([
         { deviceId: "phone", deviceName: "iPhone L" },
       ]),
       "phone",
@@ -158,7 +158,7 @@ describe("Codex Micro Bluetooth device selection", () => {
   });
 
   it("returns no selection when discovery has no candidates", () => {
-    assert.strictEqual(DesktopWindow.selectCodexMicroBluetoothDevice([]), null);
+    assert.strictEqual(DesktopWindow.selectAgentMicroBluetoothDevice([]), null);
   });
 });
 

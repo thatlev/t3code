@@ -54,7 +54,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/integrations": BlocksIcon,
   "/settings/source-control": GitBranchIcon,
   "/settings/connections": Link2Icon,
-  "/settings/codex-micro": RadioTowerIcon,
+  "/settings/agent-micro": RadioTowerIcon,
   "/settings/archived": ArchiveIcon,
 };
 

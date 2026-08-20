@@ -1185,11 +1185,11 @@ export interface DesktopBridge {
    * desktop builds never emit it.
    */
   onQuitShortcut?: (listener: (state: "down" | "up") => void) => () => void;
-  onCodexMicroCommand: (listener: (command: DesktopCodexMicroCommand) => void) => () => void;
-  getCodexMicroTransportState?: () => Promise<DesktopCodexMicroTransportState>;
-  sendCodexMicroTransportReport?: (report: readonly number[]) => void;
-  onCodexMicroTransportEvent?: (
-    listener: (event: DesktopCodexMicroTransportEvent) => void,
+  onAgentMicroCommand: (listener: (command: DesktopAgentMicroCommand) => void) => () => void;
+  getAgentMicroTransportState?: () => Promise<DesktopAgentMicroTransportState>;
+  sendAgentMicroTransportReport?: (report: readonly number[]) => void;
+  onAgentMicroTransportEvent?: (
+    listener: (event: DesktopAgentMicroTransportEvent) => void,
   ) => () => void;
   getWindowFullscreenState: () => boolean;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
@@ -1206,24 +1206,24 @@ export interface DesktopBridge {
   preview?: DesktopPreviewBridge;
 }
 
-export type DesktopCodexMicroTransportState = {
+export type DesktopAgentMicroTransportState = {
   readonly revision: number;
   readonly companionConnected: boolean;
   readonly phoneConnected: boolean;
   readonly error: string | null;
 };
 
-export type DesktopCodexMicroTransportEvent =
+export type DesktopAgentMicroTransportEvent =
   | {
       readonly kind: "state";
-      readonly state: DesktopCodexMicroTransportState;
+      readonly state: DesktopAgentMicroTransportState;
     }
   | {
       readonly kind: "input";
       readonly report: readonly number[];
     };
 
-export type DesktopCodexMicroCommand =
+export type DesktopAgentMicroCommand =
   | { readonly kind: "effort"; readonly direction: -1 | 1 }
   | {
       readonly kind: "action";

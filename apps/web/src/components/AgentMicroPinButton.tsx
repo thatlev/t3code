@@ -2,24 +2,24 @@ import { PinIcon } from "lucide-react";
 import type { MouseEvent, PointerEvent } from "react";
 
 import {
-  encodeCodexMicroTarget,
-  toggleCodexMicroPin,
-  useCodexMicroIsPinned,
-} from "../codexMicro/pins";
+  encodeAgentMicroTarget,
+  toggleAgentMicroPin,
+  useAgentMicroIsPinned,
+} from "../agentMicro/pins";
 import { cn } from "../lib/utils";
 
-type CodexMicroPinButtonProps = {
+type AgentMicroPinButtonProps = {
   readonly environmentId: string;
   readonly threadId: string;
   readonly hoverGroup: "sidebar" | "sidebar-v2" | "sidebar-row";
 };
 
-export function CodexMicroPinButton({
+export function AgentMicroPinButton({
   environmentId,
   threadId,
   hoverGroup,
-}: CodexMicroPinButtonProps) {
-  const isPinned = useCodexMicroIsPinned(environmentId, threadId);
+}: AgentMicroPinButtonProps) {
+  const isPinned = useAgentMicroIsPinned(environmentId, threadId);
   const label = isPinned ? "Unpin thread from AgentMicro" : "Pin thread to AgentMicro";
   const revealClassName =
     hoverGroup === "sidebar-v2"
@@ -34,7 +34,7 @@ export function CodexMicroPinButton({
   const handleClick = (event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
-    toggleCodexMicroPin(encodeCodexMicroTarget(environmentId, threadId));
+    toggleAgentMicroPin(encodeAgentMicroTarget(environmentId, threadId));
   };
   const handleDoubleClick = (event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();

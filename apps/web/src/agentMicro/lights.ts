@@ -1,4 +1,4 @@
-export type CodexMicroThreadStatus = "idle" | "working" | "complete" | "needs_input" | "error";
+export type AgentMicroThreadStatus = "idle" | "working" | "complete" | "needs_input" | "error";
 
 type ThreadStatusInput = {
   readonly hasPendingApprovals: boolean;
@@ -12,7 +12,7 @@ type ThreadStatusInput = {
 export function statusForThread(
   thread: ThreadStatusInput,
   lastVisitedAt: string | undefined,
-): CodexMicroThreadStatus {
+): AgentMicroThreadStatus {
   if (thread.hasPendingApprovals || thread.hasPendingUserInput) return "needs_input";
   if (thread.latestTurn?.state === "running") return "working";
   if (thread.latestTurn?.state === "error") return "error";
@@ -36,7 +36,7 @@ function light(id: number, c: number, status: string, selected: boolean) {
   return selected ? { id, c, b: 1, e: 4, s: 0.4, status } : { id, c, b: 1, e: 1, s: 0, status };
 }
 
-export function slotForStatus(id: number, status: CodexMicroThreadStatus, selected: boolean) {
+export function slotForStatus(id: number, status: AgentMicroThreadStatus, selected: boolean) {
   switch (status) {
     case "working":
       return light(id, 0x304ffe, status, selected);

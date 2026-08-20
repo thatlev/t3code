@@ -17,30 +17,30 @@ import { focusThreadInOwningWindow, onThreadWindowFocus } from "../threadWindowS
 import { useUiStateStore } from "../uiStateStore";
 import { useSidebar } from "../components/ui/sidebar";
 import { slotForStatus, statusForThread } from "./lights";
-import { codexMicroRemote, type CodexMicroWorkspaceState } from "./remote";
-import type { CodexMicroCommand } from "./protocol";
+import { agentMicroRemote, type AgentMicroWorkspaceState } from "./remote";
+import type { AgentMicroCommand } from "./protocol";
 import {
-  applyCodexMicroAutoPins,
-  decodeCodexMicroTarget,
-  encodeCodexMicroTarget,
-  readCodexMicroPins,
-  reconcileCodexMicroPins,
-  subscribeCodexMicroAutoPinRequests,
-  toggleCodexMicroPin,
-  writeCodexMicroPins,
+  applyAgentMicroAutoPins,
+  decodeAgentMicroTarget,
+  encodeAgentMicroTarget,
+  readAgentMicroPins,
+  reconcileAgentMicroPins,
+  subscribeAgentMicroAutoPinRequests,
+  toggleAgentMicroPin,
+  writeAgentMicroPins,
 } from "./pins";
-import { decodeCodexMicroProject, encodeCodexMicroProject } from "./projects";
+import { decodeAgentMicroProject, encodeAgentMicroProject } from "./projects";
 import {
-  CODEX_MICRO_ACTIONS,
-  getCodexMicroPreferences,
-  subscribeCodexMicroPreferences,
-  type CodexMicroAction,
+  AGENT_MICRO_ACTIONS,
+  getAgentMicroPreferences,
+  subscribeAgentMicroPreferences,
+  type AgentMicroAction,
 } from "./preferences";
 
-export const CODEX_MICRO_CHAT_COMMAND_EVENT = "t3-codex-micro-chat-command";
-export const CODEX_MICRO_NEW_THREAD_EVENT = "t3-codex-micro-new-thread";
+export const AGENT_MICRO_CHAT_COMMAND_EVENT = "t3-agent-micro-chat-command";
+export const AGENT_MICRO_NEW_THREAD_EVENT = "t3-agent-micro-new-thread";
 
-export type CodexMicroChatCommand =
+export type AgentMicroChatCommand =
   | { readonly kind: "fast" }
   | { readonly kind: "approve" }
   | { readonly kind: "decline" }
@@ -56,22 +56,22 @@ export type CodexMicroChatCommand =
   | { readonly kind: "insert"; readonly text: string; readonly submit: boolean };
 
 export {
-  encodeCodexMicroTarget,
-  resetCodexMicroPins,
-  useCodexMicroIsPinned,
-  useCodexMicroPinnedTargets,
+  encodeAgentMicroTarget,
+  resetAgentMicroPins,
+  useAgentMicroIsPinned,
+  useAgentMicroPinnedTargets,
 } from "./pins";
 
-function dispatchChatCommand(command: CodexMicroChatCommand): void {
+function dispatchChatCommand(command: AgentMicroChatCommand): void {
   window.dispatchEvent(
-    new CustomEvent<CodexMicroChatCommand>(CODEX_MICRO_CHAT_COMMAND_EVENT, {
+    new CustomEvent<AgentMicroChatCommand>(AGENT_MICRO_CHAT_COMMAND_EVENT, {
       detail: command,
     }),
   );
 }
 
 function runAction(
-  action: CodexMicroAction,
+  action: AgentMicroAction,
   selected: string | null,
   navigate: ReturnType<typeof useNavigate>,
   toggleSidebar: () => void,
@@ -91,7 +91,7 @@ function runAction(
       return;
     case "pin": {
       if (!selected) return;
-      toggleCodexMicroPin(selected);
+      toggleAgentMicroPin(selected);
       return;
     }
     case "frontendMax":
@@ -109,7 +109,7 @@ function runAction(
   }
 }
 
-export function CodexMicroController() {
+export function AgentMicroController() {
   const threads = useThreadShells();
   const threadsBootstrapped = useAllEnvironmentShellsBootstrapped();
   const navigate = useNavigate();
@@ -118,9 +118,9 @@ export function CodexMicroController() {
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread, orderedProjects } =
     useHandleNewThread();
   const preferences = useSyncExternalStore(
-    subscribeCodexMicroPreferences,
-    getCodexMicroPreferences,
-    getCodexMicroPreferences,
+    subscribeAgentMicroPreferences,
+    getAgentMicroPreferences,
+    getAgentMicroPreferences,
   );
   const [pinsRevision, setPinsRevision] = useState(0);
   const [pendingAutoPins, setPendingAutoPins] = useState<readonly string[]>([]);
@@ -130,7 +130,7 @@ export function CodexMicroController() {
   const selected = useMemo(() => {
     const match = location.pathname.match(/^\/([^/]+)\/([^/]+)$/);
     if (!match) return null;
-    return encodeCodexMicroTarget(match[1] ?? "", match[2] ?? "");
+    return encodeAgentMicroTarget(match[1] ?? "", match[2] ?? "");
   }, [location.pathname]);
   // A pinned key names a chat, not "whatever is in front of me". If that chat
   // lives in another window, raise that window instead of navigating here —
@@ -165,7 +165,7 @@ export function CodexMicroController() {
     [navigate],
   );
 
-  const startCodexMicroNewThread = useCallback(() => {
+  const startAgentMicroNewThread = useCallback(() => {
     void startNewThreadFromContext({
       activeDraftThread,
       activeThread: activeThread ?? undefined,
@@ -176,10 +176,10 @@ export function CodexMicroController() {
 
   // The projects the phone offers in its NEW picker, in the same order the
   // sidebar shows them so the two surfaces agree on "the first project".
-  const codexMicroProjects = useMemo(
+  const agentMicroProjects = useMemo(
     () =>
       orderedProjects.map((project) => ({
-        id: encodeCodexMicroProject(project.environmentId, project.id),
+        id: encodeAgentMicroProject(project.environmentId, project.id),
         title: project.title,
       })),
     [orderedProjects],
@@ -188,9 +188,9 @@ export function CodexMicroController() {
   // NEW resolves to the project the user picked on the board. An id this
   // client no longer knows (a project removed while the picker was open)
   // falls back to the contextual default rather than doing nothing.
-  const startCodexMicroNewThreadInProject = useCallback(
+  const startAgentMicroNewThreadInProject = useCallback(
     (encodedProjectId: string) => {
-      const decoded = decodeCodexMicroProject(encodedProjectId);
+      const decoded = decodeAgentMicroProject(encodedProjectId);
       const project = decoded
         ? orderedProjects.find(
             (candidate) =>
@@ -199,31 +199,31 @@ export function CodexMicroController() {
           )
         : undefined;
       if (!project) {
-        startCodexMicroNewThread();
+        startAgentMicroNewThread();
         return;
       }
       void handleNewThread(scopeProjectRef(project.environmentId, project.id));
     },
-    [handleNewThread, orderedProjects, startCodexMicroNewThread],
+    [handleNewThread, orderedProjects, startAgentMicroNewThread],
   );
 
   // Keep the new-thread action mounted across every route, including
-  // Settings. Codex Micro commands must leave Settings and navigate into the
+  // Settings. AgentMicro commands must leave Settings and navigate into the
   // new draft instead of relying on a listener that only exists on chat
   // routes.
   useEffect(() => {
-    window.addEventListener(CODEX_MICRO_NEW_THREAD_EVENT, startCodexMicroNewThread);
+    window.addEventListener(AGENT_MICRO_NEW_THREAD_EVENT, startAgentMicroNewThread);
     return () => {
-      window.removeEventListener(CODEX_MICRO_NEW_THREAD_EVENT, startCodexMicroNewThread);
+      window.removeEventListener(AGENT_MICRO_NEW_THREAD_EVENT, startAgentMicroNewThread);
     };
-  }, [startCodexMicroNewThread]);
+  }, [startAgentMicroNewThread]);
 
   useEffect(() => {
     if (!isElectron) return;
     let reconnectInterval: number | null = null;
     const restore = () => {
       if (document.visibilityState === "visible") {
-        void codexMicroRemote.restore();
+        void agentMicroRemote.restore();
       }
     };
     const stopReconnectInterval = () => {
@@ -254,15 +254,15 @@ export function CodexMicroController() {
 
   useEffect(() => {
     const onPinsChanged = () => setPinsRevision((revision) => revision + 1);
-    window.addEventListener("t3-codex-micro-pins-changed", onPinsChanged);
+    window.addEventListener("t3-agent-micro-pins-changed", onPinsChanged);
     return () => {
-      window.removeEventListener("t3-codex-micro-pins-changed", onPinsChanged);
+      window.removeEventListener("t3-agent-micro-pins-changed", onPinsChanged);
     };
   }, []);
 
   useEffect(
     () =>
-      subscribeCodexMicroAutoPinRequests((target) => {
+      subscribeAgentMicroAutoPinRequests((target) => {
         setPendingAutoPins((current) =>
           current.includes(target) ? current : [...current, target],
         );
@@ -271,27 +271,27 @@ export function CodexMicroController() {
   );
 
   // Pin bookkeeping runs on every client (plain web included), not just
-  // where the Codex Micro hardware is attached. Reconciliation drops a pin
+  // where the AgentMicro hardware is attached. Reconciliation drops a pin
   // only when its thread is positively archived — a thread that is briefly
   // missing from the shell list (environment reconnecting, snapshot
   // refreshing) keeps its pin, so transient loads can never erode the
   // persisted layout.
   useEffect(() => {
     if (!threadsBootstrapped) return;
-    const pins = readCodexMicroPins();
+    const pins = readAgentMicroPins();
     const availableTargetIds = new Set(
       threads
         .filter((thread) => thread.archivedAt === null)
-        .map((thread) => encodeCodexMicroTarget(thread.environmentId, thread.id)),
+        .map((thread) => encodeAgentMicroTarget(thread.environmentId, thread.id)),
     );
     const archivedTargetIds = new Set(
       threads
         .filter((thread) => thread.archivedAt !== null)
-        .map((thread) => encodeCodexMicroTarget(thread.environmentId, thread.id)),
+        .map((thread) => encodeAgentMicroTarget(thread.environmentId, thread.id)),
     );
-    const reconciledPins = reconcileCodexMicroPins(pins, archivedTargetIds);
+    const reconciledPins = reconcileAgentMicroPins(pins, archivedTargetIds);
     let pinsChanged = pins.some((pin, index) => pin !== reconciledPins[index]);
-    const autoPinResult = applyCodexMicroAutoPins(
+    const autoPinResult = applyAgentMicroAutoPins(
       reconciledPins,
       pendingAutoPins,
       availableTargetIds,
@@ -304,13 +304,13 @@ export function CodexMicroController() {
     }
 
     if (pinsChanged) {
-      writeCodexMicroPins(autoPinResult.pins);
+      writeAgentMicroPins(autoPinResult.pins);
     }
   }, [pendingAutoPins, pinsRevision, threads, threadsBootstrapped]);
 
   useEffect(() => {
     if (!isElectron) return;
-    const pins = readCodexMicroPins();
+    const pins = readAgentMicroPins();
     const targets = [...threads]
       .filter((thread) => thread.archivedAt === null)
       .sort((left, right) => {
@@ -320,18 +320,18 @@ export function CodexMicroController() {
           : newestFirst || String(left.id).localeCompare(String(right.id));
       })
       .map((thread) => ({
-        id: encodeCodexMicroTarget(thread.environmentId, thread.id),
+        id: encodeAgentMicroTarget(thread.environmentId, thread.id),
         kind: "t3" as const,
         label: thread.title,
         provider: "t3" as const,
-        active: encodeCodexMicroTarget(thread.environmentId, thread.id) === selected,
+        active: encodeAgentMicroTarget(thread.environmentId, thread.id) === selected,
         nativeVoice: false as const,
         status: statusForThread(
           thread,
           threadLastVisitedAtById[scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))],
         ),
       }));
-    const previousState = codexMicroRemote.getWorkspaceState();
+    const previousState = agentMicroRemote.getWorkspaceState();
     const previousTargets =
       document.hidden && previousState
         ? previousState.targets.filter(
@@ -356,7 +356,7 @@ export function CodexMicroController() {
       }
       return slotForStatus(index, target.status, pin === selected);
     });
-    const state: CodexMicroWorkspaceState = {
+    const state: AgentMicroWorkspaceState = {
       type: "workspace-state",
       version: 2,
       surface: "t3code",
@@ -364,14 +364,14 @@ export function CodexMicroController() {
       lightingBrightness: preferences.brightness / 100,
       autoDimSeconds: preferences.autoDimSeconds,
       targets: stableTargets.map(({ status: _, ...target }) => target),
-      projects: codexMicroProjects,
+      projects: agentMicroProjects,
       pins,
       ...(selected ? { selected } : {}),
       nativeVoiceActive,
       slots,
       controls: {
         actionKeys: preferences.actionKeys.map((action, index) => {
-          const descriptor = CODEX_MICRO_ACTIONS.find((candidate) => candidate.value === action)!;
+          const descriptor = AGENT_MICRO_ACTIONS.find((candidate) => candidate.value === action)!;
           return {
             key: `ACT0${index + 6}`,
             action,
@@ -383,11 +383,11 @@ export function CodexMicroController() {
         joystick: preferences.joystick,
       },
     };
-    codexMicroRemote.setWorkspaceState(
+    agentMicroRemote.setWorkspaceState(
       nativeVoiceIssue ? { ...state, issue: nativeVoiceIssue } : state,
     );
   }, [
-    codexMicroProjects,
+    agentMicroProjects,
     nativeVoiceActive,
     nativeVoiceIssue,
     pinsRevision,
@@ -399,9 +399,9 @@ export function CodexMicroController() {
 
   useEffect(() => {
     if (!isElectron) return;
-    const handleCommand = (command: CodexMicroCommand) => {
+    const handleCommand = (command: AgentMicroCommand) => {
       if (command.cmd === "setControlTarget" || command.cmd === "refreshState") {
-        codexMicroRemote.replayWorkspaceState();
+        agentMicroRemote.replayWorkspaceState();
         return;
       }
 
@@ -411,7 +411,7 @@ export function CodexMicroController() {
             ? command.target
             : selected;
         if (!target) return;
-        toggleCodexMicroPin(target);
+        toggleAgentMicroPin(target);
         return;
       }
 
@@ -419,10 +419,10 @@ export function CodexMicroController() {
         // Newer phone builds send the project chosen in the board's picker.
         // Older ones send nothing and keep the contextual-default behaviour.
         if (typeof command.project === "string" && command.project.length > 0) {
-          startCodexMicroNewThreadInProject(command.project);
+          startAgentMicroNewThreadInProject(command.project);
           return;
         }
-        startCodexMicroNewThread();
+        startAgentMicroNewThread();
         return;
       }
 
@@ -498,8 +498,8 @@ export function CodexMicroController() {
       if (key.startsWith("AG")) {
         const requestedIndex =
           typeof command.ag === "number" ? command.ag : Number.parseInt(key.slice(2), 10);
-        const pin = readCodexMicroPins()[requestedIndex] ?? null;
-        const target = pin ? decodeCodexMicroTarget(pin) : null;
+        const pin = readAgentMicroPins()[requestedIndex] ?? null;
+        const target = pin ? decodeAgentMicroTarget(pin) : null;
         if (!target) return;
         openThreadTarget(target.environmentId, target.threadId);
         return;
@@ -517,7 +517,7 @@ export function CodexMicroController() {
           selected,
           navigate,
           toggleSidebar,
-          startCodexMicroNewThread,
+          startAgentMicroNewThread,
         );
         return;
       }
@@ -533,14 +533,14 @@ export function CodexMicroController() {
           selected,
           navigate,
           toggleSidebar,
-          startCodexMicroNewThread,
+          startAgentMicroNewThread,
         );
         return;
       }
       if (key === "ACT12") dispatchChatCommand({ kind: "send" });
     };
-    const unsubscribeBluetooth = codexMicroRemote.subscribeCommands(handleCommand);
-    const unsubscribeDesktop = window.desktopBridge?.onCodexMicroCommand((command) => {
+    const unsubscribeBluetooth = agentMicroRemote.subscribeCommands(handleCommand);
+    const unsubscribeDesktop = window.desktopBridge?.onAgentMicroCommand((command) => {
       if (command.kind === "effort") {
         dispatchChatCommand({ kind: "effort", direction: command.direction });
         return;
@@ -558,7 +558,7 @@ export function CodexMicroController() {
             dispatchChatCommand({ kind: command.action });
             break;
           case "new":
-            startCodexMicroNewThread();
+            startAgentMicroNewThread();
             break;
           case "fork":
             dispatchChatCommand({ kind: "fork" });
@@ -579,7 +579,7 @@ export function CodexMicroController() {
             toggleSidebar();
             break;
           case "settings":
-            void navigate({ to: "/settings/codex-micro" });
+            void navigate({ to: "/settings/agent-micro" });
             break;
         }
       }
@@ -593,8 +593,8 @@ export function CodexMicroController() {
     openThreadTarget,
     preferences,
     selected,
-    startCodexMicroNewThread,
-    startCodexMicroNewThreadInProject,
+    startAgentMicroNewThread,
+    startAgentMicroNewThreadInProject,
     toggleSidebar,
   ]);
 

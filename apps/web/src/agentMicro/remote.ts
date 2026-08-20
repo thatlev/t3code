@@ -1,16 +1,16 @@
 import type {
-  DesktopCodexMicroTransportEvent,
-  DesktopCodexMicroTransportState,
+  DesktopAgentMicroTransportEvent,
+  DesktopAgentMicroTransportState,
 } from "@t3tools/contracts";
 
 import {
-  CODEX_MICRO_INPUT_UUID,
-  CODEX_MICRO_OUTPUT_UUID,
-  CODEX_MICRO_SERVICE_UUID,
-  CODEX_MICRO_STATE_CHANNEL,
-  CodexMicroCommandDecoder,
+  AGENT_MICRO_INPUT_UUID,
+  AGENT_MICRO_OUTPUT_UUID,
+  AGENT_MICRO_SERVICE_UUID,
+  AGENT_MICRO_STATE_CHANNEL,
+  AgentMicroCommandDecoder,
   encodeReports,
-  type CodexMicroCommand,
+  type AgentMicroCommand,
 } from "./protocol";
 
 type BluetoothCharacteristicLike = EventTarget & {
@@ -45,7 +45,7 @@ type BluetoothLike = {
   }): Promise<BluetoothDeviceLike>;
 };
 
-export type CodexMicroConnectionPhase =
+export type AgentMicroConnectionPhase =
   | "unsupported"
   | "disconnected"
   | "scanning"
@@ -53,8 +53,8 @@ export type CodexMicroConnectionPhase =
   | "connected"
   | "error";
 
-export type CodexMicroRemoteSnapshot = {
-  readonly phase: CodexMicroConnectionPhase;
+export type AgentMicroRemoteSnapshot = {
+  readonly phase: AgentMicroConnectionPhase;
   readonly deviceName: string | null;
   readonly error: string | null;
   readonly autoReconnect: boolean;
@@ -62,7 +62,7 @@ export type CodexMicroRemoteSnapshot = {
   readonly charging: boolean;
 };
 
-export type CodexMicroWorkspaceState = {
+export type AgentMicroWorkspaceState = {
   readonly type: "workspace-state";
   readonly version: 2;
   readonly surface: "t3code";
@@ -110,7 +110,7 @@ export type CodexMicroWorkspaceState = {
   readonly issue?: string;
 };
 
-const INITIAL_SNAPSHOT: CodexMicroRemoteSnapshot = {
+const INITIAL_SNAPSHOT: AgentMicroRemoteSnapshot = {
   phase:
     typeof navigator !== "undefined" && "bluetooth" in navigator ? "disconnected" : "unsupported",
   deviceName: null,
@@ -154,9 +154,9 @@ const MERGEABLE_WORKSPACE_STATE_KEYS = [
   "pins",
   "slots",
   "controls",
-] as const satisfies ReadonlyArray<keyof CodexMicroWorkspaceState>;
+] as const satisfies ReadonlyArray<keyof AgentMicroWorkspaceState>;
 
-export type CodexMicroWorkspaceStateFrame = Record<string, unknown>;
+export type AgentMicroWorkspaceStateFrame = Record<string, unknown>;
 
 /**
  * Build the smallest frame that moves the phone from `previous` to `next`.
@@ -164,10 +164,10 @@ export type CodexMicroWorkspaceStateFrame = Record<string, unknown>;
  * connection and an explicit replay need.
  */
 export function buildWorkspaceStateFrame(
-  next: CodexMicroWorkspaceState,
-  previous: CodexMicroWorkspaceState | null,
-): CodexMicroWorkspaceStateFrame {
-  const frame: CodexMicroWorkspaceStateFrame = {
+  next: AgentMicroWorkspaceState,
+  previous: AgentMicroWorkspaceState | null,
+): AgentMicroWorkspaceStateFrame {
+  const frame: AgentMicroWorkspaceStateFrame = {
     type: next.type,
     version: next.version,
     surface: next.surface,
@@ -191,8 +191,8 @@ export function buildWorkspaceStateFrame(
  * identical scalars" is the real definition of a no-op.
  */
 export function isRedundantWorkspaceStateFrame(
-  frame: CodexMicroWorkspaceStateFrame,
-  previous: CodexMicroWorkspaceState | null,
+  frame: AgentMicroWorkspaceStateFrame,
+  previous: AgentMicroWorkspaceState | null,
 ): boolean {
   if (previous === null) return false;
   if (MERGEABLE_WORKSPACE_STATE_KEYS.some((key) => key in frame)) return false;
@@ -204,18 +204,18 @@ export function isRedundantWorkspaceStateFrame(
   );
 }
 
-class CodexMicroRemote {
+class AgentMicroRemote {
   private snapshot = INITIAL_SNAPSHOT;
   private readonly listeners = new Set<() => void>();
-  private readonly commandListeners = new Set<(command: CodexMicroCommand) => void>();
-  private readonly decoder = new CodexMicroCommandDecoder();
+  private readonly commandListeners = new Set<(command: AgentMicroCommand) => void>();
+  private readonly decoder = new AgentMicroCommandDecoder();
   private readonly recentCommandIds = new Map<string, number>();
   private device: BluetoothDeviceLike | null = null;
   private output: BluetoothCharacteristicLike | null = null;
   private writeReport: ((report: Uint8Array) => Promise<void>) | null = null;
-  private workspaceState: CodexMicroWorkspaceState | null = null;
+  private workspaceState: AgentMicroWorkspaceState | null = null;
   /** Last state the phone has certainly received; `null` forces a full frame. */
-  private lastSentWorkspaceState: CodexMicroWorkspaceState | null = null;
+  private lastSentWorkspaceState: AgentMicroWorkspaceState | null = null;
   private reconnectTimer: number | null = null;
   private livenessTimer: number | null = null;
   private phoneDropTimer: number | null = null;
@@ -229,15 +229,15 @@ class CodexMicroRemote {
   private desktopTransportUnsubscribe: (() => void) | null = null;
   private desktopTransportRevision = -1;
 
-  getSnapshot = (): CodexMicroRemoteSnapshot => this.snapshot;
-  getWorkspaceState = (): CodexMicroWorkspaceState | null => this.workspaceState;
+  getSnapshot = (): AgentMicroRemoteSnapshot => this.snapshot;
+  getWorkspaceState = (): AgentMicroWorkspaceState | null => this.workspaceState;
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   };
 
-  subscribeCommands(listener: (command: CodexMicroCommand) => void): () => void {
+  subscribeCommands(listener: (command: AgentMicroCommand) => void): () => void {
     this.commandListeners.add(listener);
     return () => this.commandListeners.delete(listener);
   }
@@ -257,12 +257,12 @@ class CodexMicroRemote {
     const desktopTransport = this.desktopTransport();
     if (desktopTransport !== null) {
       if (this.desktopTransportUnsubscribe === null) {
-        this.desktopTransportUnsubscribe = desktopTransport.onCodexMicroTransportEvent(
+        this.desktopTransportUnsubscribe = desktopTransport.onAgentMicroTransportEvent(
           this.handleDesktopTransportEvent,
         );
       }
       try {
-        this.applyDesktopTransportState(await desktopTransport.getCodexMicroTransportState());
+        this.applyDesktopTransportState(await desktopTransport.getAgentMicroTransportState());
       } catch (error) {
         this.fail(error);
         this.scheduleReconnect();
@@ -283,9 +283,9 @@ class CodexMicroRemote {
     try {
       const devices = bluetooth.getDevices ? await bluetooth.getDevices() : [];
       // The phone advertises "AgentMicro"; pre-rename builds advertised
-      // "Codex Micro". Accept either so an older phone still reconnects.
+      // "AgentMicro". Accept either so an older phone still reconnects.
       const saved =
-        devices.find((device) => device.name === "AgentMicro" || device.name === "Codex Micro") ??
+        devices.find((device) => device.name === "AgentMicro" || device.name === "AgentMicro") ??
         devices[0];
       if (saved) {
         await this.connectDevice(saved);
@@ -332,8 +332,8 @@ class CodexMicroRemote {
       error: automatic ? "Looking for the previously paired iPhone…" : null,
     });
     const device = await bluetooth.requestDevice({
-      filters: [{ services: [CODEX_MICRO_SERVICE_UUID] }],
-      optionalServices: [CODEX_MICRO_SERVICE_UUID],
+      filters: [{ services: [AGENT_MICRO_SERVICE_UUID] }],
+      optionalServices: [AGENT_MICRO_SERVICE_UUID],
     });
     await this.connectDevice(device);
   }
@@ -359,7 +359,7 @@ class CodexMicroRemote {
     this.scheduleReconnect();
   }
 
-  setWorkspaceState(state: CodexMicroWorkspaceState): void {
+  setWorkspaceState(state: AgentMicroWorkspaceState): void {
     this.workspaceState = state;
     for (const listener of this.listeners) listener();
     if (this.snapshot.phase === "connected") {
@@ -381,29 +381,29 @@ class CodexMicroRemote {
   }
 
   private desktopTransport(): {
-    getCodexMicroTransportState: () => Promise<DesktopCodexMicroTransportState>;
-    sendCodexMicroTransportReport: (report: readonly number[]) => void;
-    onCodexMicroTransportEvent: (
-      listener: (event: DesktopCodexMicroTransportEvent) => void,
+    getAgentMicroTransportState: () => Promise<DesktopAgentMicroTransportState>;
+    sendAgentMicroTransportReport: (report: readonly number[]) => void;
+    onAgentMicroTransportEvent: (
+      listener: (event: DesktopAgentMicroTransportEvent) => void,
     ) => () => void;
   } | null {
     if (typeof window === "undefined") return null;
     const bridge = window.desktopBridge;
     if (
-      bridge?.getCodexMicroTransportState === undefined ||
-      bridge.sendCodexMicroTransportReport === undefined ||
-      bridge.onCodexMicroTransportEvent === undefined
+      bridge?.getAgentMicroTransportState === undefined ||
+      bridge.sendAgentMicroTransportReport === undefined ||
+      bridge.onAgentMicroTransportEvent === undefined
     ) {
       return null;
     }
     return {
-      getCodexMicroTransportState: bridge.getCodexMicroTransportState,
-      sendCodexMicroTransportReport: bridge.sendCodexMicroTransportReport,
-      onCodexMicroTransportEvent: bridge.onCodexMicroTransportEvent,
+      getAgentMicroTransportState: bridge.getAgentMicroTransportState,
+      sendAgentMicroTransportReport: bridge.sendAgentMicroTransportReport,
+      onAgentMicroTransportEvent: bridge.onAgentMicroTransportEvent,
     };
   }
 
-  private readonly handleDesktopTransportEvent = (event: DesktopCodexMicroTransportEvent): void => {
+  private readonly handleDesktopTransportEvent = (event: DesktopAgentMicroTransportEvent): void => {
     if (event.kind === "state") {
       this.applyDesktopTransportState(event.state);
       return;
@@ -414,7 +414,7 @@ class CodexMicroRemote {
     this.ingestReport(body);
   };
 
-  private applyDesktopTransportState(state: DesktopCodexMicroTransportState): void {
+  private applyDesktopTransportState(state: DesktopAgentMicroTransportState): void {
     if (state.revision <= this.desktopTransportRevision) return;
     this.desktopTransportRevision = state.revision;
 
@@ -451,7 +451,7 @@ class CodexMicroRemote {
     const transport = this.desktopTransport();
     if (state.companionConnected && state.phoneConnected && transport !== null) {
       this.writeReport = async (report) => {
-        transport.sendCodexMicroTransportReport([...report]);
+        transport.sendAgentMicroTransportReport([...report]);
       };
       this.reconnectAttempt = 0;
       this.update({
@@ -469,7 +469,7 @@ class CodexMicroRemote {
     this.applyDesktopTransportDisconnect(state);
   }
 
-  private applyDesktopTransportDisconnect(state: DesktopCodexMicroTransportState): void {
+  private applyDesktopTransportDisconnect(state: DesktopAgentMicroTransportState): void {
     // Idempotent, and repeated here because the grace timer reaches this
     // without having gone through the caller's preamble.
     this.clearReconnect();
@@ -508,9 +508,9 @@ class CodexMicroRemote {
     if (!server) {
       throw new Error("The selected device does not expose a Bluetooth GATT server.");
     }
-    const service = await server.getPrimaryService(CODEX_MICRO_SERVICE_UUID);
-    const input = await service.getCharacteristic(CODEX_MICRO_INPUT_UUID);
-    this.output = await service.getCharacteristic(CODEX_MICRO_OUTPUT_UUID);
+    const service = await server.getPrimaryService(AGENT_MICRO_SERVICE_UUID);
+    const input = await service.getCharacteristic(AGENT_MICRO_INPUT_UUID);
+    this.output = await service.getCharacteristic(AGENT_MICRO_OUTPUT_UUID);
     this.writeReport = async (report) => {
       const output = this.output;
       if (!output) throw new Error("The AgentMicro output channel is unavailable.");
@@ -632,7 +632,7 @@ class CodexMicroRemote {
     this.workspaceWriteScheduled = true;
     this.writeQueue = this.writeQueue
       .then(async () => {
-        const reports = encodeReports(CODEX_MICRO_STATE_CHANNEL, frame);
+        const reports = encodeReports(AGENT_MICRO_STATE_CHANNEL, frame);
         for (const report of reports) {
           await writeReport(report);
         }
@@ -712,10 +712,10 @@ class CodexMicroRemote {
     });
   }
 
-  private update(patch: Partial<CodexMicroRemoteSnapshot>): void {
+  private update(patch: Partial<AgentMicroRemoteSnapshot>): void {
     this.snapshot = { ...this.snapshot, ...patch };
     for (const listener of this.listeners) listener();
   }
 }
 
-export const codexMicroRemote = new CodexMicroRemote();
+export const agentMicroRemote = new AgentMicroRemote();

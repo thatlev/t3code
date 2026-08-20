@@ -19,19 +19,19 @@ import {
 } from "lucide-react";
 import { type CSSProperties, type ReactNode, useState, useSyncExternalStore } from "react";
 
-import { resetCodexMicroPins } from "../../codexMicro/pins";
+import { resetAgentMicroPins } from "../../agentMicro/pins";
 import {
-  CODEX_MICRO_ACTIONS,
-  CODEX_MICRO_DIAL_FUNCTIONS,
-  getCodexMicroPreferences,
-  resetCodexMicroPreferences,
-  setCodexMicroPreferences,
-  subscribeCodexMicroPreferences,
-  type CodexMicroAction,
-  type CodexMicroDialFunction,
-  type CodexMicroJoystickDirection,
-} from "../../codexMicro/preferences";
-import { codexMicroRemote } from "../../codexMicro/remote";
+  AGENT_MICRO_ACTIONS,
+  AGENT_MICRO_DIAL_FUNCTIONS,
+  getAgentMicroPreferences,
+  resetAgentMicroPreferences,
+  setAgentMicroPreferences,
+  subscribeAgentMicroPreferences,
+  type AgentMicroAction,
+  type AgentMicroDialFunction,
+  type AgentMicroJoystickDirection,
+} from "../../agentMicro/preferences";
+import { agentMicroRemote } from "../../agentMicro/remote";
 import { isElectron } from "../../env";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
 import { Switch } from "../ui/switch";
@@ -131,7 +131,7 @@ function AgentKey({
   );
 }
 
-function ActionIcon({ action }: { action: CodexMicroAction }) {
+function ActionIcon({ action }: { action: AgentMicroAction }) {
   const className = "size-4.5";
   switch (action) {
     case "fast":
@@ -163,8 +163,8 @@ function ActionPicker({
   onChange,
 }: {
   title: string;
-  value: CodexMicroAction;
-  onChange: (value: CodexMicroAction) => void;
+  value: AgentMicroAction;
+  onChange: (value: AgentMicroAction) => void;
 }) {
   return (
     <div className="w-56 p-1">
@@ -172,7 +172,7 @@ function ActionPicker({
         {title}
       </PopoverTitle>
       <div className="grid gap-0.5">
-        {CODEX_MICRO_ACTIONS.map((action) => (
+        {AGENT_MICRO_ACTIONS.map((action) => (
           <button
             key={action.value}
             type="button"
@@ -195,11 +195,11 @@ function EditableActionKey({
   onChange,
 }: {
   index: number;
-  value: CodexMicroAction;
-  onChange: (value: CodexMicroAction) => void;
+  value: AgentMicroAction;
+  onChange: (value: AgentMicroAction) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const descriptor = CODEX_MICRO_ACTIONS.find((item) => item.value === value)!;
+  const descriptor = AGENT_MICRO_ACTIONS.find((item) => item.value === value)!;
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
@@ -227,8 +227,8 @@ function EditableJoystick({
   value,
   onChange,
 }: {
-  value: Readonly<Record<CodexMicroJoystickDirection, CodexMicroAction>>;
-  onChange: (direction: CodexMicroJoystickDirection, action: CodexMicroAction) => void;
+  value: Readonly<Record<AgentMicroJoystickDirection, AgentMicroAction>>;
+  onChange: (direction: AgentMicroJoystickDirection, action: AgentMicroAction) => void;
 }) {
   return (
     <Popover>
@@ -268,17 +268,17 @@ function EditableJoystick({
   );
 }
 
-function CodexMicroPreview() {
+function AgentMicroPreview() {
   const workspaceState = useSyncExternalStore(
-    codexMicroRemote.subscribe,
-    codexMicroRemote.getWorkspaceState,
-    codexMicroRemote.getWorkspaceState,
+    agentMicroRemote.subscribe,
+    agentMicroRemote.getWorkspaceState,
+    agentMicroRemote.getWorkspaceState,
   );
   const targetById = new Map(workspaceState?.targets.map((target) => [target.id, target]));
   const preferences = useSyncExternalStore(
-    subscribeCodexMicroPreferences,
-    getCodexMicroPreferences,
-    getCodexMicroPreferences,
+    subscribeAgentMicroPreferences,
+    getAgentMicroPreferences,
+    getAgentMicroPreferences,
   );
 
   const agent = (index: number) => {
@@ -311,7 +311,7 @@ function CodexMicroPreview() {
           <EditableJoystick
             value={preferences.joystick}
             onChange={(direction, action) =>
-              setCodexMicroPreferences({
+              setAgentMicroPreferences({
                 joystick: { ...preferences.joystick, [direction]: action },
               })
             }
@@ -331,13 +331,13 @@ function CodexMicroPreview() {
               value={action}
               onChange={(value) => {
                 const next = [...preferences.actionKeys] as [
-                  CodexMicroAction,
-                  CodexMicroAction,
-                  CodexMicroAction,
-                  CodexMicroAction,
+                  AgentMicroAction,
+                  AgentMicroAction,
+                  AgentMicroAction,
+                  AgentMicroAction,
                 ];
                 next[index] = value;
-                setCodexMicroPreferences({ actionKeys: next });
+                setAgentMicroPreferences({ actionKeys: next });
               }}
             />
           ))}
@@ -377,17 +377,17 @@ function ActionSelect({
   label,
   onChange,
 }: {
-  value: CodexMicroAction;
+  value: AgentMicroAction;
   label: string;
-  onChange: (value: CodexMicroAction) => void;
+  onChange: (value: AgentMicroAction) => void;
 }) {
   return (
     <SetupSelect
       value={value}
       label={label}
-      onChange={(value) => onChange(value as CodexMicroAction)}
+      onChange={(value) => onChange(value as AgentMicroAction)}
     >
-      {CODEX_MICRO_ACTIONS.map((action) => (
+      {AGENT_MICRO_ACTIONS.map((action) => (
         <option key={action.value} value={action.value}>
           {action.label}
         </option>
@@ -419,21 +419,21 @@ function SetupSelect({
   );
 }
 
-export function CodexMicroSettings() {
+export function AgentMicroSettings() {
   const snapshot = useSyncExternalStore(
-    codexMicroRemote.subscribe,
-    codexMicroRemote.getSnapshot,
-    codexMicroRemote.getSnapshot,
+    agentMicroRemote.subscribe,
+    agentMicroRemote.getSnapshot,
+    agentMicroRemote.getSnapshot,
   );
   const workspaceState = useSyncExternalStore(
-    codexMicroRemote.subscribe,
-    codexMicroRemote.getWorkspaceState,
-    codexMicroRemote.getWorkspaceState,
+    agentMicroRemote.subscribe,
+    agentMicroRemote.getWorkspaceState,
+    agentMicroRemote.getWorkspaceState,
   );
   const preferences = useSyncExternalStore(
-    subscribeCodexMicroPreferences,
-    getCodexMicroPreferences,
-    getCodexMicroPreferences,
+    subscribeAgentMicroPreferences,
+    getAgentMicroPreferences,
+    getAgentMicroPreferences,
   );
   const connected = snapshot.phase === "connected";
   const busy = snapshot.phase === "scanning" || snapshot.phase === "connecting";
@@ -452,8 +452,8 @@ export function CodexMicroSettings() {
   const pinnedCount = workspaceState?.pins.filter(Boolean).length ?? 0;
 
   const resetLayout = () => {
-    resetCodexMicroPins();
-    resetCodexMicroPreferences();
+    resetAgentMicroPins();
+    resetAgentMicroPreferences();
   };
 
   return (
@@ -524,7 +524,7 @@ export function CodexMicroSettings() {
                   max="100"
                   value={preferences.brightness}
                   onChange={(event) =>
-                    setCodexMicroPreferences({ brightness: Number(event.target.value) })
+                    setAgentMicroPreferences({ brightness: Number(event.target.value) })
                   }
                 />
                 <output className="w-9 text-right tabular-nums">{preferences.brightness}%</output>
@@ -538,7 +538,7 @@ export function CodexMicroSettings() {
               <SetupSelect
                 label="Auto-dim delay"
                 value={String(preferences.autoDimSeconds)}
-                onChange={(value) => setCodexMicroPreferences({ autoDimSeconds: Number(value) })}
+                onChange={(value) => setAgentMicroPreferences({ autoDimSeconds: Number(value) })}
               >
                 <option value="60">1 minute</option>
                 <option value="180">3 minutes</option>
@@ -574,7 +574,7 @@ export function CodexMicroSettings() {
               <Switch
                 checked={preferences.autoPinNewChats}
                 onCheckedChange={(checked) =>
-                  setCodexMicroPreferences({ autoPinNewChats: checked })
+                  setAgentMicroPreferences({ autoPinNewChats: checked })
                 }
                 aria-label="Auto-pin new chats"
               />
@@ -588,7 +588,7 @@ export function CodexMicroSettings() {
                 <button
                   type="button"
                   className="rounded-md px-2 py-1 text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
-                  onClick={resetCodexMicroPins}
+                  onClick={resetAgentMicroPins}
                 >
                   Clear all
                 </button>
@@ -600,7 +600,7 @@ export function CodexMicroSettings() {
           <SettingLine
             title="Knob"
             description={`${
-              CODEX_MICRO_DIAL_FUNCTIONS.find((entry) => entry.value === preferences.dialFunction)
+              AGENT_MICRO_DIAL_FUNCTIONS.find((entry) => entry.value === preferences.dialFunction)
                 ?.description ?? ""
             } Hold to open AgentMicro settings.`}
             control={
@@ -608,10 +608,10 @@ export function CodexMicroSettings() {
                 label="Knob function"
                 value={preferences.dialFunction}
                 onChange={(value) =>
-                  setCodexMicroPreferences({ dialFunction: value as CodexMicroDialFunction })
+                  setAgentMicroPreferences({ dialFunction: value as AgentMicroDialFunction })
                 }
               >
-                {CODEX_MICRO_DIAL_FUNCTIONS.map((entry) => (
+                {AGENT_MICRO_DIAL_FUNCTIONS.map((entry) => (
                   <option key={entry.value} value={entry.value}>
                     {entry.label}
                   </option>
@@ -620,7 +620,7 @@ export function CodexMicroSettings() {
             }
           />
 
-          <CodexMicroPreview />
+          <AgentMicroPreview />
 
           <div className="border-b border-border/70 py-3 text-center text-xs text-muted-foreground">
             Click an action key or the joystick in the preview to change it.

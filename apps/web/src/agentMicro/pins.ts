@@ -1,27 +1,27 @@
 import { useMemo, useSyncExternalStore } from "react";
 
-const PINS_STORAGE_KEY = "t3.codexMicro.pins.v1";
-const PINS_CHANGE_EVENT = "t3-codex-micro-pins-changed";
-const AUTO_PIN_REQUEST_EVENT = "t3-codex-micro-auto-pin-requested";
+const PINS_STORAGE_KEY = "t3.agentMicro.pins.v1";
+const PINS_CHANGE_EVENT = "t3-agent-micro-pins-changed";
+const AUTO_PIN_REQUEST_EVENT = "t3-agent-micro-auto-pin-requested";
 
-export const CODEX_MICRO_PIN_SLOT_COUNT = 6;
+export const AGENT_MICRO_PIN_SLOT_COUNT = 6;
 
 // A thread the user unpins by hand must never be auto-pinned again: auto-pin
 // is a convenience for brand-new chats, not an override of an explicit
 // unpin. The record is bounded; only the most recent unpins are remembered.
 const EXPLICIT_UNPIN_LIMIT = 100;
 
-type StoredCodexMicroPins = {
+type StoredAgentMicroPins = {
   readonly pins: Array<string | null>;
   readonly explicitUnpins: readonly string[];
 };
 
 function normalizePins(pins: ReadonlyArray<unknown>): Array<string | null> {
   const compact = pins.filter((pin): pin is string => typeof pin === "string" && pin.length > 0);
-  return Array.from({ length: CODEX_MICRO_PIN_SLOT_COUNT }, (_, index) => compact[index] ?? null);
+  return Array.from({ length: AGENT_MICRO_PIN_SLOT_COUNT }, (_, index) => compact[index] ?? null);
 }
 
-function parseStoredPins(value: unknown): StoredCodexMicroPins {
+function parseStoredPins(value: unknown): StoredAgentMicroPins {
   // v1 stored a bare slot array; v2 wraps it with the explicit-unpin record.
   if (Array.isArray(value)) {
     return { pins: normalizePins(value), explicitUnpins: [] };
@@ -40,7 +40,7 @@ function parseStoredPins(value: unknown): StoredCodexMicroPins {
   return { pins: normalizePins([]), explicitUnpins: [] };
 }
 
-function readStoredPins(): StoredCodexMicroPins {
+function readStoredPins(): StoredAgentMicroPins {
   if (typeof localStorage === "undefined") {
     return { pins: normalizePins([]), explicitUnpins: [] };
   }
@@ -51,20 +51,20 @@ function readStoredPins(): StoredCodexMicroPins {
   }
 }
 
-function writeStoredPins(stored: StoredCodexMicroPins): void {
+function writeStoredPins(stored: StoredAgentMicroPins): void {
   localStorage.setItem(PINS_STORAGE_KEY, JSON.stringify({ version: 2, ...stored }));
   window.dispatchEvent(new Event(PINS_CHANGE_EVENT));
 }
 
-export function readCodexMicroPins(): Array<string | null> {
+export function readAgentMicroPins(): Array<string | null> {
   return readStoredPins().pins;
 }
 
-export function writeCodexMicroPins(pins: ReadonlyArray<string | null>): void {
+export function writeAgentMicroPins(pins: ReadonlyArray<string | null>): void {
   writeStoredPins({ pins: normalizePins(pins), explicitUnpins: readStoredPins().explicitUnpins });
 }
 
-export function reconcileCodexMicroPins(
+export function reconcileAgentMicroPins(
   pins: ReadonlyArray<string | null>,
   archivedTargets: ReadonlySet<string>,
 ): Array<string | null> {
@@ -80,11 +80,11 @@ export function reconcileCodexMicroPins(
 /// being deleted. The settlement variant below keeps its own name for the
 /// settle/un-settle flow; both share the same "gone but not user-unpinned"
 /// semantics.
-export function removeCodexMicroPin(environmentId: string, threadId: string): boolean {
-  return unpinCodexMicroTargetForSettlement(environmentId, threadId);
+export function removeAgentMicroPin(environmentId: string, threadId: string): boolean {
+  return unpinAgentMicroTargetForSettlement(environmentId, threadId);
 }
 
-export function applyCodexMicroAutoPins(
+export function applyAgentMicroAutoPins(
   pins: ReadonlyArray<string | null>,
   requestedTargets: ReadonlyArray<string>,
   availableTargets: ReadonlySet<string>,
@@ -121,11 +121,11 @@ function subscribePins(listener: () => void): () => void {
   return () => window.removeEventListener(PINS_CHANGE_EVENT, listener);
 }
 
-export function encodeCodexMicroTarget(environmentId: string, threadId: string): string {
+export function encodeAgentMicroTarget(environmentId: string, threadId: string): string {
   return `${encodeURIComponent(environmentId)}|${encodeURIComponent(threadId)}`;
 }
 
-export function decodeCodexMicroTarget(
+export function decodeAgentMicroTarget(
   value: string,
 ): { environmentId: string; threadId: string } | null {
   const separator = value.indexOf("|");
@@ -151,8 +151,8 @@ function withExplicitUnpin(explicitUnpins: readonly string[], target: string): r
   return [target, ...withoutExplicitUnpin(explicitUnpins, target)].slice(0, EXPLICIT_UNPIN_LIMIT);
 }
 
-export function pinCodexMicroTarget(environmentId: string, threadId: string): boolean {
-  const target = encodeCodexMicroTarget(environmentId, threadId);
+export function pinAgentMicroTarget(environmentId: string, threadId: string): boolean {
+  const target = encodeAgentMicroTarget(environmentId, threadId);
   const stored = readStoredPins();
   const explicitUnpins = withoutExplicitUnpin(stored.explicitUnpins, target);
   if (stored.pins.includes(target)) {
@@ -171,14 +171,14 @@ export function pinCodexMicroTarget(environmentId: string, threadId: string): bo
 }
 
 /**
- * Settlement temporarily removes a thread from Codex Micro without recording
+ * Settlement temporarily removes a thread from AgentMicro without recording
  * an explicit user unpin. That lets an eventual un-settle restore the pin.
  */
-export function unpinCodexMicroTargetForSettlement(
+export function unpinAgentMicroTargetForSettlement(
   environmentId: string,
   threadId: string,
 ): boolean {
-  const target = encodeCodexMicroTarget(environmentId, threadId);
+  const target = encodeAgentMicroTarget(environmentId, threadId);
   const stored = readStoredPins();
   const existing = stored.pins.indexOf(target);
   if (existing < 0) return false;
@@ -188,7 +188,7 @@ export function unpinCodexMicroTargetForSettlement(
   return true;
 }
 
-export function toggleCodexMicroPin(target: string): boolean {
+export function toggleAgentMicroPin(target: string): boolean {
   const stored = readStoredPins();
   const pins = stored.pins;
   const existing = pins.indexOf(target);
@@ -210,8 +210,8 @@ export function toggleCodexMicroPin(target: string): boolean {
 // a chat still counts as a local draft must not queue duplicates.
 const requestedAutoPinTargets = new Set<string>();
 
-export function requestCodexMicroAutoPin(environmentId: string, threadId: string): void {
-  const target = encodeCodexMicroTarget(environmentId, threadId);
+export function requestAgentMicroAutoPin(environmentId: string, threadId: string): void {
+  const target = encodeAgentMicroTarget(environmentId, threadId);
   if (requestedAutoPinTargets.has(target)) return;
   // Explicitly unpinned threads never re-request: the record persists
   // across sessions, while the dedupe set only covers this one. Check it
@@ -225,7 +225,7 @@ export function requestCodexMicroAutoPin(environmentId: string, threadId: string
   );
 }
 
-export function subscribeCodexMicroAutoPinRequests(listener: (target: string) => void): () => void {
+export function subscribeAgentMicroAutoPinRequests(listener: (target: string) => void): () => void {
   const onRequest = (event: Event) => {
     const target = (event as CustomEvent<unknown>).detail;
     if (typeof target === "string" && target.length > 0) {
@@ -236,7 +236,7 @@ export function subscribeCodexMicroAutoPinRequests(listener: (target: string) =>
   return () => window.removeEventListener(AUTO_PIN_REQUEST_EVENT, onRequest);
 }
 
-export function useCodexMicroIsPinned(environmentId: string, threadId: string): boolean {
+export function useAgentMicroIsPinned(environmentId: string, threadId: string): boolean {
   const serialized = useSyncExternalStore(
     subscribePins,
     () => localStorage.getItem(PINS_STORAGE_KEY) ?? "null",
@@ -244,14 +244,14 @@ export function useCodexMicroIsPinned(environmentId: string, threadId: string): 
   );
   try {
     return parseStoredPins(JSON.parse(serialized)).pins.includes(
-      encodeCodexMicroTarget(environmentId, threadId),
+      encodeAgentMicroTarget(environmentId, threadId),
     );
   } catch {
     return false;
   }
 }
 
-export function useCodexMicroPinnedTargets(): readonly string[] {
+export function useAgentMicroPinnedTargets(): readonly string[] {
   const serialized = useSyncExternalStore(
     subscribePins,
     () => localStorage.getItem(PINS_STORAGE_KEY) ?? "null",
@@ -268,7 +268,7 @@ export function useCodexMicroPinnedTargets(): readonly string[] {
   }, [serialized]);
 }
 
-export function resetCodexMicroPins(): void {
+export function resetAgentMicroPins(): void {
   localStorage.removeItem(PINS_STORAGE_KEY);
   window.dispatchEvent(new Event(PINS_CHANGE_EVENT));
 }

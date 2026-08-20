@@ -200,30 +200,30 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.removeListener(IpcChannels.MENU_ACTION_CHANNEL, wrappedListener);
     };
   },
-  onCodexMicroCommand: (listener) => {
+  onAgentMicroCommand: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, command: unknown) => {
       if (typeof command !== "object" || command === null || !("kind" in command)) return;
       listener(command as Parameters<typeof listener>[0]);
     };
 
-    ipcRenderer.on(IpcChannels.CODEX_MICRO_COMMAND_CHANNEL, wrappedListener);
+    ipcRenderer.on(IpcChannels.AGENT_MICRO_COMMAND_CHANNEL, wrappedListener);
     return () => {
-      ipcRenderer.removeListener(IpcChannels.CODEX_MICRO_COMMAND_CHANNEL, wrappedListener);
+      ipcRenderer.removeListener(IpcChannels.AGENT_MICRO_COMMAND_CHANNEL, wrappedListener);
     };
   },
-  getCodexMicroTransportState: () =>
-    ipcRenderer.invoke(IpcChannels.CODEX_MICRO_TRANSPORT_GET_STATE_CHANNEL),
-  sendCodexMicroTransportReport: (report) => {
-    ipcRenderer.send(IpcChannels.CODEX_MICRO_TRANSPORT_SEND_REPORT_CHANNEL, [...report]);
+  getAgentMicroTransportState: () =>
+    ipcRenderer.invoke(IpcChannels.AGENT_MICRO_TRANSPORT_GET_STATE_CHANNEL),
+  sendAgentMicroTransportReport: (report) => {
+    ipcRenderer.send(IpcChannels.AGENT_MICRO_TRANSPORT_SEND_REPORT_CHANNEL, [...report]);
   },
-  onCodexMicroTransportEvent: (listener) => {
+  onAgentMicroTransportEvent: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, value: unknown) => {
       if (typeof value !== "object" || value === null || !("kind" in value)) return;
       listener(value as Parameters<typeof listener>[0]);
     };
-    ipcRenderer.on(IpcChannels.CODEX_MICRO_TRANSPORT_EVENT_CHANNEL, wrappedListener);
+    ipcRenderer.on(IpcChannels.AGENT_MICRO_TRANSPORT_EVENT_CHANNEL, wrappedListener);
     return () => {
-      ipcRenderer.removeListener(IpcChannels.CODEX_MICRO_TRANSPORT_EVENT_CHANNEL, wrappedListener);
+      ipcRenderer.removeListener(IpcChannels.AGENT_MICRO_TRANSPORT_EVENT_CHANNEL, wrappedListener);
     };
   },
   onQuitShortcut: (listener) => {

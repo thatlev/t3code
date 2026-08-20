@@ -10,7 +10,7 @@ const TAG_OUTPUT = 0x4f; // O — T3 report to the iPhone
 const TAG_PRESENCE = 0x50; // P — companion's end-to-end phone presence
 const TAG_T3_CLIENT = 0x54; // T — identify this socket client as T3 Code
 
-export type CodexMicroCompanionTransportState = {
+export type AgentMicroCompanionTransportState = {
   readonly revision: number;
   readonly companionConnected: boolean;
   readonly phoneConnected: boolean;
@@ -19,17 +19,17 @@ export type CodexMicroCompanionTransportState = {
 
 type TransportOptions = {
   readonly socketPath?: string;
-  readonly onState: (state: CodexMicroCompanionTransportState) => void;
+  readonly onState: (state: AgentMicroCompanionTransportState) => void;
   readonly onInput: (report: Uint8Array) => void;
   readonly onCompanionUnavailable?: () => void;
   readonly reconnectDelayMs?: (attempt: number) => number;
 };
 
-export function codexMicroCompanionSocketPath(temporaryDirectory = NodeOS.tmpdir()): string {
+export function agentMicroCompanionSocketPath(temporaryDirectory = NodeOS.tmpdir()): string {
   return NodePath.join(temporaryDirectory, "CodexMicro", "codexbridge.sock");
 }
 
-export function encodeCodexMicroCompanionFrame(tag: number, payload: Uint8Array): Buffer {
+export function encodeAgentMicroCompanionFrame(tag: number, payload: Uint8Array): Buffer {
   const frame = Buffer.allocUnsafe(5 + payload.byteLength);
   frame.writeUInt32BE(1 + payload.byteLength, 0);
   frame[4] = tag;
@@ -37,7 +37,7 @@ export function encodeCodexMicroCompanionFrame(tag: number, payload: Uint8Array)
   return frame;
 }
 
-export class CodexMicroCompanionFrameDecoder {
+export class AgentMicroCompanionFrameDecoder {
   private pending = Buffer.alloc(0);
 
   push(chunk: Uint8Array): ReadonlyArray<{ readonly tag: number; readonly payload: Uint8Array }> {
@@ -70,13 +70,13 @@ export class CodexMicroCompanionFrameDecoder {
   }
 }
 
-export class CodexMicroCompanionTransport {
+export class AgentMicroCompanionTransport {
   private readonly socketPath: string;
   private readonly onState: TransportOptions["onState"];
   private readonly onInput: TransportOptions["onInput"];
   private readonly onCompanionUnavailable: TransportOptions["onCompanionUnavailable"];
   private readonly reconnectDelayMs: NonNullable<TransportOptions["reconnectDelayMs"]>;
-  private state: CodexMicroCompanionTransportState = {
+  private state: AgentMicroCompanionTransportState = {
     revision: 0,
     companionConnected: false,
     phoneConnected: false,
@@ -88,7 +88,7 @@ export class CodexMicroCompanionTransport {
   private shouldRun = false;
 
   constructor(options: TransportOptions) {
-    this.socketPath = options.socketPath ?? codexMicroCompanionSocketPath();
+    this.socketPath = options.socketPath ?? agentMicroCompanionSocketPath();
     this.onState = options.onState;
     this.onInput = options.onInput;
     this.onCompanionUnavailable = options.onCompanionUnavailable;
@@ -96,7 +96,7 @@ export class CodexMicroCompanionTransport {
       options.reconnectDelayMs ?? ((attempt) => Math.min(5_000, 250 * 2 ** attempt));
   }
 
-  getState(): CodexMicroCompanionTransportState {
+  getState(): AgentMicroCompanionTransportState {
     return this.state;
   }
 
@@ -127,13 +127,13 @@ export class CodexMicroCompanionTransport {
     if (!socket || !this.state.companionConnected || socket.destroyed || !socket.writable) {
       return false;
     }
-    socket.write(encodeCodexMicroCompanionFrame(TAG_OUTPUT, report));
+    socket.write(encodeAgentMicroCompanionFrame(TAG_OUTPUT, report));
     return true;
   }
 
   private connect(): void {
     if (!this.shouldRun || this.socket !== null) return;
-    const decoder = new CodexMicroCompanionFrameDecoder();
+    const decoder = new AgentMicroCompanionFrameDecoder();
     const socket = NodeNet.createConnection(this.socketPath);
     this.socket = socket;
     let connectionError: NodeJS.ErrnoException | null = null;
@@ -142,7 +142,7 @@ export class CodexMicroCompanionTransport {
       if (this.socket !== socket) return;
       this.reconnectAttempt = 0;
       socket.write(
-        encodeCodexMicroCompanionFrame(TAG_T3_CLIENT, new TextEncoder().encode("t3code")),
+        encodeAgentMicroCompanionFrame(TAG_T3_CLIENT, new TextEncoder().encode("t3code")),
       );
       this.transition({
         companionConnected: true,
@@ -180,10 +180,10 @@ export class CodexMicroCompanionTransport {
         companionConnected: false,
         phoneConnected: false,
         error: unavailable
-          ? "Waiting for the Codex Micro menu companion…"
+          ? "Waiting for the AgentMicro menu companion…"
           : connectionError?.message
-            ? `Codex Micro companion connection failed: ${connectionError.message}`
-            : "Codex Micro companion disconnected. Reconnecting…",
+            ? `AgentMicro companion connection failed: ${connectionError.message}`
+            : "AgentMicro companion disconnected. Reconnecting…",
       });
       if (unavailable) this.onCompanionUnavailable?.();
       this.scheduleReconnect();
@@ -201,7 +201,7 @@ export class CodexMicroCompanionTransport {
     this.reconnectTimer.unref();
   }
 
-  private transition(patch: Omit<Partial<CodexMicroCompanionTransportState>, "revision">): void {
+  private transition(patch: Omit<Partial<AgentMicroCompanionTransportState>, "revision">): void {
     const next = { ...this.state, ...patch };
     if (
       next.companionConnected === this.state.companionConnected &&

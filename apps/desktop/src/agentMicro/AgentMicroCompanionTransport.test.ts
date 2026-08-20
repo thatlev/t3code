@@ -7,10 +7,10 @@ import * as NodeTimersPromises from "node:timers/promises";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  CodexMicroCompanionFrameDecoder,
-  CodexMicroCompanionTransport,
-  encodeCodexMicroCompanionFrame,
-} from "./CodexMicroCompanionTransport.ts";
+  AgentMicroCompanionFrameDecoder,
+  AgentMicroCompanionTransport,
+  encodeAgentMicroCompanionFrame,
+} from "./AgentMicroCompanionTransport.ts";
 
 async function waitFor(assertion: () => void, timeoutMs = 2_000): Promise<void> {
   const startedAt = process.hrtime.bigint();
@@ -27,11 +27,11 @@ async function waitFor(assertion: () => void, timeoutMs = 2_000): Promise<void> 
   throw lastError;
 }
 
-describe("Codex Micro companion framing", () => {
+describe("AgentMicro companion framing", () => {
   it("decodes fragmented and coalesced frames without losing boundaries", () => {
-    const decoder = new CodexMicroCompanionFrameDecoder();
-    const presence = encodeCodexMicroCompanionFrame(0x50, Uint8Array.of(1));
-    const input = encodeCodexMicroCompanionFrame(0x49, Uint8Array.of(5, 9, 7));
+    const decoder = new AgentMicroCompanionFrameDecoder();
+    const presence = encodeAgentMicroCompanionFrame(0x50, Uint8Array.of(1));
+    const input = encodeAgentMicroCompanionFrame(0x49, Uint8Array.of(5, 9, 7));
     const bytes = Buffer.concat([presence, input]);
 
     expect(decoder.push(bytes.subarray(0, 3))).toEqual([]);
@@ -42,10 +42,10 @@ describe("Codex Micro companion framing", () => {
   });
 });
 
-describe.skipIf(process.platform === "win32")("Codex Micro companion transport", () => {
+describe.skipIf(process.platform === "win32")("AgentMicro companion transport", () => {
   it("identifies T3, receives phone state, and sends reports over the shared socket", async () => {
     const temporaryDirectory = await NodeFs.mkdtemp(
-      NodePath.join(NodeOS.tmpdir(), "t3-codex-micro-transport-"),
+      NodePath.join(NodeOS.tmpdir(), "t3-agent-micro-transport-"),
     );
     const socketPath = NodePath.join(temporaryDirectory, "companion.sock");
     const receivedFrames: Array<{ readonly tag: number; readonly payload: Uint8Array }> = [];
@@ -57,7 +57,7 @@ describe.skipIf(process.platform === "win32")("Codex Micro companion transport",
     const clients: NodeNet.Socket[] = [];
     const server = NodeNet.createServer((socket) => {
       clients.push(socket);
-      const decoder = new CodexMicroCompanionFrameDecoder();
+      const decoder = new AgentMicroCompanionFrameDecoder();
       socket.on("data", (chunk) => receivedFrames.push(...decoder.push(chunk)));
     });
 
@@ -66,7 +66,7 @@ describe.skipIf(process.platform === "win32")("Codex Micro companion transport",
       server.listen(socketPath, resolve);
     });
 
-    const transport = new CodexMicroCompanionTransport({
+    const transport = new AgentMicroCompanionTransport({
       socketPath,
       onState: (state) => states.push(state),
       onInput: (report) => inputs.push(report),
@@ -83,8 +83,8 @@ describe.skipIf(process.platform === "win32")("Codex Micro companion transport",
         });
       });
 
-      clients[0]?.write(encodeCodexMicroCompanionFrame(0x50, Uint8Array.of(1)));
-      clients[0]?.write(encodeCodexMicroCompanionFrame(0x49, Uint8Array.of(6, 5, 4)));
+      clients[0]?.write(encodeAgentMicroCompanionFrame(0x50, Uint8Array.of(1)));
+      clients[0]?.write(encodeAgentMicroCompanionFrame(0x49, Uint8Array.of(6, 5, 4)));
       await waitFor(() => {
         expect(states.at(-1)?.phoneConnected).toBe(true);
         expect(inputs).toContainEqual(Uint8Array.of(6, 5, 4));

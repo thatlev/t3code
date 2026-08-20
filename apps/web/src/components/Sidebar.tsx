@@ -167,7 +167,7 @@ import {
   type SnoozePreset,
 } from "./Sidebar.snooze";
 import { ProjectFavicon } from "./ProjectFavicon";
-import { CodexMicroPinButton } from "./CodexMicroPinButton";
+import { AgentMicroPinButton } from "./AgentMicroPinButton";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
 import {
@@ -1137,7 +1137,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     />
   ) : (
     <span className="flex min-w-0 flex-1 items-center gap-1.5">
-      <CodexMicroPinButton
+      <AgentMicroPinButton
         environmentId={thread.environmentId}
         threadId={thread.id}
         hoverGroup="sidebar-row"

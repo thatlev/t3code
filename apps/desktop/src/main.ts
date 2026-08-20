@@ -69,9 +69,9 @@ import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "./wsl/DesktopWslServerTree.ts";
 import {
-  CodexMicroCompanionTransport,
-  type CodexMicroCompanionTransportState,
-} from "./codexMicro/CodexMicroCompanionTransport.ts";
+  AgentMicroCompanionTransport,
+  type AgentMicroCompanionTransportState,
+} from "./agentMicro/AgentMicroCompanionTransport.ts";
 import {
   buildMacDictationScript,
   MAC_DICTATION_ACCESSIBILITY_ERROR,
@@ -79,11 +79,11 @@ import {
 } from "./dictation/MacDictation.ts";
 import * as IpcChannels from "./ipc/channels.ts";
 
-const CODEX_MICRO_COMMAND_CHANNEL = "desktop:codex-micro-command";
+const AGENT_MICRO_COMMAND_CHANNEL = "desktop:agent-micro-command";
 const SET_MAC_DICTATION_CHANNEL = "desktop:set-mac-dictation";
 
 /**
- * The one window that speaks to the Codex Micro remote.
+ * The one window that speaks to the AgentMicro remote.
  *
  * The pad is a single physical device with a single board, so exactly one
  * renderer may drive it. Fanning its input out to every window made each of
@@ -92,7 +92,7 @@ const SET_MAC_DICTATION_CHANNEL = "desktop:set-mac-dictation";
  * whichever window answered last. Its board is published the same way: two
  * authors would fight over the pins and lighting.
  */
-function codexMicroHostWindow(): Electron.BrowserWindow | null {
+function agentMicroHostWindow(): Electron.BrowserWindow | null {
   const catchAll = DesktopThreadWindows.desktopThreadWindows.catchAllWindow();
   if (catchAll !== null) return catchAll;
   // Every window is a torn-off one (the main window was closed): fall back to
@@ -102,18 +102,18 @@ function codexMicroHostWindow(): Electron.BrowserWindow | null {
   return fallback !== undefined && !fallback.isDestroyed() ? fallback : null;
 }
 
-function isCodexMicroHost(webContentsId: number): boolean {
-  return codexMicroHostWindow()?.webContents.id === webContentsId;
+function isAgentMicroHost(webContentsId: number): boolean {
+  return agentMicroHostWindow()?.webContents.id === webContentsId;
 }
 
-function broadcastCodexMicroTransportEvent(value: unknown): void {
-  const host = codexMicroHostWindow();
+function broadcastAgentMicroTransportEvent(value: unknown): void {
+  const host = agentMicroHostWindow();
   if (host === null) return;
-  host.webContents.send(IpcChannels.CODEX_MICRO_TRANSPORT_EVENT_CHANNEL, value);
+  host.webContents.send(IpcChannels.AGENT_MICRO_TRANSPORT_EVENT_CHANNEL, value);
 }
 
 let lastCompanionLaunchAttemptAt = 0;
-function openCodexMicroCompanion(): void {
+function openAgentMicroCompanion(): void {
   if (process.platform !== "darwin") return;
   const now = Date.now();
   if (now - lastCompanionLaunchAttemptAt < 30_000) return;
@@ -126,30 +126,30 @@ function openCodexMicroCompanion(): void {
   );
 }
 
-const codexMicroCompanionTransport = new CodexMicroCompanionTransport({
-  onState: (state: CodexMicroCompanionTransportState) => {
-    broadcastCodexMicroTransportEvent({ kind: "state", state });
+const agentMicroCompanionTransport = new AgentMicroCompanionTransport({
+  onState: (state: AgentMicroCompanionTransportState) => {
+    broadcastAgentMicroTransportEvent({ kind: "state", state });
   },
   onInput: (report) => {
-    broadcastCodexMicroTransportEvent({ kind: "input", report: [...report] });
+    broadcastAgentMicroTransportEvent({ kind: "input", report: [...report] });
   },
-  onCompanionUnavailable: openCodexMicroCompanion,
+  onCompanionUnavailable: openAgentMicroCompanion,
 });
 
-Electron.ipcMain.removeHandler(IpcChannels.CODEX_MICRO_TRANSPORT_GET_STATE_CHANNEL);
-Electron.ipcMain.handle(IpcChannels.CODEX_MICRO_TRANSPORT_GET_STATE_CHANNEL, (event) =>
+Electron.ipcMain.removeHandler(IpcChannels.AGENT_MICRO_TRANSPORT_GET_STATE_CHANNEL);
+Electron.ipcMain.handle(IpcChannels.AGENT_MICRO_TRANSPORT_GET_STATE_CHANNEL, (event) =>
   // A non-host window is told the pad is absent, so it never starts writing to
   // a device another window already owns.
-  isCodexMicroHost(event.sender.id)
-    ? codexMicroCompanionTransport.getState()
+  isAgentMicroHost(event.sender.id)
+    ? agentMicroCompanionTransport.getState()
     : { revision: 0, companionConnected: false, phoneConnected: false, error: null },
 );
-Electron.ipcMain.removeAllListeners(IpcChannels.CODEX_MICRO_TRANSPORT_SEND_REPORT_CHANNEL);
+Electron.ipcMain.removeAllListeners(IpcChannels.AGENT_MICRO_TRANSPORT_SEND_REPORT_CHANNEL);
 Electron.ipcMain.on(
-  IpcChannels.CODEX_MICRO_TRANSPORT_SEND_REPORT_CHANNEL,
+  IpcChannels.AGENT_MICRO_TRANSPORT_SEND_REPORT_CHANNEL,
   (event, value: unknown) => {
     if (
-      !isCodexMicroHost(event.sender.id) ||
+      !isAgentMicroHost(event.sender.id) ||
       !Array.isArray(value) ||
       (value.length !== 63 && value.length !== 64) ||
       value.some(
@@ -158,11 +158,11 @@ Electron.ipcMain.on(
     ) {
       return;
     }
-    codexMicroCompanionTransport.send(Uint8Array.from(value as number[]));
+    agentMicroCompanionTransport.send(Uint8Array.from(value as number[]));
   },
 );
-codexMicroCompanionTransport.start();
-Electron.app.once("before-quit", () => codexMicroCompanionTransport.stop());
+agentMicroCompanionTransport.start();
+Electron.app.once("before-quit", () => agentMicroCompanionTransport.stop());
 
 let macDictationActive = false;
 let macDictationQueue = Promise.resolve({
@@ -212,12 +212,12 @@ Electron.ipcMain.handle(SET_MAC_DICTATION_CHANNEL, (_event, requested: unknown) 
   return macDictationQueue;
 });
 
-function parseCodexMicroUrl(value: string) {
+function parseAgentMicroUrl(value: string) {
   try {
     const url = new URL(value);
     if (
       (url.protocol !== "t3code:" && url.protocol !== "t3code-dev:") ||
-      url.hostname !== "codex-micro" ||
+      url.hostname !== "agent-micro" ||
       url.pathname !== "/command"
     ) {
       return null;
@@ -261,13 +261,13 @@ function parseCodexMicroUrl(value: string) {
   return null;
 }
 
-const pendingCodexMicroCommands: Array<NonNullable<ReturnType<typeof parseCodexMicroUrl>>> = [];
+const pendingAgentMicroCommands: Array<NonNullable<ReturnType<typeof parseAgentMicroUrl>>> = [];
 
 // Remote commands act on exactly one window. Broadcasting them made every open
 // window jump to the same chat; a "focus" goes to the window that actually
 // holds that chat, and everything else goes to the window the user is in.
-function resolveCodexMicroTargetWindow(
-  command: NonNullable<ReturnType<typeof parseCodexMicroUrl>>,
+function resolveAgentMicroTargetWindow(
+  command: NonNullable<ReturnType<typeof parseAgentMicroUrl>>,
   windows: readonly Electron.BrowserWindow[],
 ): Electron.BrowserWindow | undefined {
   if (command.kind === "focus" && command.environmentId && command.threadId) {
@@ -289,39 +289,39 @@ function resolveCodexMicroTargetWindow(
   return Electron.BrowserWindow.getFocusedWindow() ?? windows[0];
 }
 
-function dispatchCodexMicroUrl(value: string) {
-  const command = parseCodexMicroUrl(value);
+function dispatchAgentMicroUrl(value: string) {
+  const command = parseAgentMicroUrl(value);
   if (command === null) return;
   const windows = Electron.BrowserWindow.getAllWindows();
   if (windows.length === 0) {
-    pendingCodexMicroCommands.push(command);
+    pendingAgentMicroCommands.push(command);
     return;
   }
-  const target = resolveCodexMicroTargetWindow(command, windows);
+  const target = resolveAgentMicroTargetWindow(command, windows);
   if (target === undefined || target.isDestroyed()) return;
   Electron.app.focus({ steal: true });
   target.show();
   target.focus();
-  target.webContents.send(CODEX_MICRO_COMMAND_CHANNEL, command);
+  target.webContents.send(AGENT_MICRO_COMMAND_CHANNEL, command);
 }
 
 Electron.app.on("open-url", (event, url) => {
   event.preventDefault();
-  dispatchCodexMicroUrl(url);
+  dispatchAgentMicroUrl(url);
 });
 Electron.app.on("second-instance", (_event, argv) => {
-  for (const value of argv) dispatchCodexMicroUrl(value);
+  for (const value of argv) dispatchAgentMicroUrl(value);
 });
 Electron.app.on("browser-window-created", (_event, window) => {
   window.webContents.once("did-finish-load", () => {
-    for (const command of pendingCodexMicroCommands.splice(0)) {
-      window.webContents.send(CODEX_MICRO_COMMAND_CHANNEL, command);
+    for (const command of pendingAgentMicroCommands.splice(0)) {
+      window.webContents.send(AGENT_MICRO_COMMAND_CHANNEL, command);
     }
   });
 });
 for (const value of process.argv) {
   if (value.startsWith("t3code:") || value.startsWith("t3code-dev:")) {
-    dispatchCodexMicroUrl(value);
+    dispatchAgentMicroUrl(value);
   }
 }
 

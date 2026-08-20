@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 function createLocalStorageStub(initialValue?: string): Storage {
   const values = new Map<string, string>();
   if (initialValue !== undefined) {
-    values.set("t3.codexMicro.preferences.v1", initialValue);
+    values.set("t3.agentMicro.preferences.v1", initialValue);
   }
   return {
     getItem: (key) => values.get(key) ?? null,
@@ -26,7 +26,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("Codex Micro preferences", () => {
+describe("AgentMicro preferences", () => {
   it("enables auto-pin for preferences saved before the option existed", async () => {
     vi.stubGlobal(
       "localStorage",
@@ -45,20 +45,20 @@ describe("Codex Micro preferences", () => {
       ),
     );
 
-    const { getCodexMicroPreferences } = await import("./preferences");
-    expect(getCodexMicroPreferences().autoPinNewChats).toBe(true);
+    const { getAgentMicroPreferences } = await import("./preferences");
+    expect(getAgentMicroPreferences().autoPinNewChats).toBe(true);
   });
 
   it("defaults the knob to reasoning effort and persists a switch to scroll", async () => {
     const storage = createLocalStorageStub();
     vi.stubGlobal("localStorage", storage);
 
-    const { getCodexMicroPreferences, setCodexMicroPreferences } = await import("./preferences");
-    expect(getCodexMicroPreferences().dialFunction).toBe("effort");
+    const { getAgentMicroPreferences, setAgentMicroPreferences } = await import("./preferences");
+    expect(getAgentMicroPreferences().dialFunction).toBe("effort");
 
-    setCodexMicroPreferences({ dialFunction: "scroll" });
-    expect(getCodexMicroPreferences().dialFunction).toBe("scroll");
-    expect(JSON.parse(storage.getItem("t3.codexMicro.preferences.v1") ?? "{}").dialFunction).toBe(
+    setAgentMicroPreferences({ dialFunction: "scroll" });
+    expect(getAgentMicroPreferences().dialFunction).toBe("scroll");
+    expect(JSON.parse(storage.getItem("t3.agentMicro.preferences.v1") ?? "{}").dialFunction).toBe(
       "scroll",
     );
   });
@@ -69,20 +69,20 @@ describe("Codex Micro preferences", () => {
       createLocalStorageStub(JSON.stringify({ brightness: 80, dialFunction: "nonsense" })),
     );
 
-    const { getCodexMicroPreferences } = await import("./preferences");
-    expect(getCodexMicroPreferences().dialFunction).toBe("effort");
+    const { getAgentMicroPreferences } = await import("./preferences");
+    expect(getAgentMicroPreferences().dialFunction).toBe("effort");
   });
 
   it("persists auto-pin when the user turns it off", async () => {
     const storage = createLocalStorageStub();
     vi.stubGlobal("localStorage", storage);
 
-    const { getCodexMicroPreferences, setCodexMicroPreferences } = await import("./preferences");
-    setCodexMicroPreferences({ autoPinNewChats: false });
+    const { getAgentMicroPreferences, setAgentMicroPreferences } = await import("./preferences");
+    setAgentMicroPreferences({ autoPinNewChats: false });
 
-    expect(getCodexMicroPreferences().autoPinNewChats).toBe(false);
+    expect(getAgentMicroPreferences().autoPinNewChats).toBe(false);
     expect(
-      JSON.parse(storage.getItem("t3.codexMicro.preferences.v1") ?? "{}").autoPinNewChats,
+      JSON.parse(storage.getItem("t3.agentMicro.preferences.v1") ?? "{}").autoPinNewChats,
     ).toBe(false);
   });
 });

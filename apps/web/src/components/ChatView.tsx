@@ -73,8 +73,8 @@ import {
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { isElectron } from "../env";
-import { requestCodexMicroAutoPin } from "../codexMicro/pins";
-import { getCodexMicroPreferences } from "../codexMicro/preferences";
+import { requestAgentMicroAutoPin } from "../agentMicro/pins";
+import { getAgentMicroPreferences } from "../agentMicro/preferences";
 import { readLocalApi } from "../localApi";
 import { useDiffPanelStore } from "../diffPanelStore";
 import {
@@ -126,9 +126,9 @@ import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import {
-  CODEX_MICRO_CHAT_COMMAND_EVENT,
-  type CodexMicroChatCommand,
-} from "../codexMicro/controller";
+  AGENT_MICRO_CHAT_COMMAND_EVENT,
+  type AgentMicroChatCommand,
+} from "../agentMicro/controller";
 import { expandBuiltinSkills } from "../builtinSkills";
 import {
   selectActiveRightPanel,
@@ -518,7 +518,7 @@ function formatOutgoingPrompt(params: {
   const promptEffort = resolvePromptInjectedEffort(caps, params.effort);
   return applyClaudePromptEffortPrefix(params.text, promptEffort);
 }
-const CODEX_MICRO_SCROLL_TICK_PX = 120;
+const AGENT_MICRO_SCROLL_TICK_PX = 120;
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
 
@@ -5359,8 +5359,8 @@ function ChatViewContent(props: ChatViewProps) {
       } else {
         turnStartSucceeded = true;
         acknowledgeActiveThreadWoke();
-        if (isLocalDraftThread && getCodexMicroPreferences().autoPinNewChats) {
-          requestCodexMicroAutoPin(activeThread.environmentId, threadIdForSend);
+        if (isLocalDraftThread && getAgentMicroPreferences().autoPinNewChats) {
+          requestAgentMicroAutoPin(activeThread.environmentId, threadIdForSend);
         }
       }
     }
@@ -5462,8 +5462,8 @@ function ChatViewContent(props: ChatViewProps) {
   );
 
   useEffect(() => {
-    const onCodexMicroCommand = (event: Event) => {
-      const command = (event as CustomEvent<CodexMicroChatCommand>).detail;
+    const onAgentMicroCommand = (event: Event) => {
+      const command = (event as CustomEvent<AgentMicroChatCommand>).detail;
       if (!command) return;
 
       switch (command.kind) {
@@ -5503,7 +5503,7 @@ function ChatViewContent(props: ChatViewProps) {
           if (!scrollNode || typeof scrollNode.scrollBy !== "function") break;
           cancelTimelineLiveFollowForUserNavigationRef.current();
           scrollNode.scrollBy({
-            top: command.direction * CODEX_MICRO_SCROLL_TICK_PX,
+            top: command.direction * AGENT_MICRO_SCROLL_TICK_PX,
             behavior: "auto",
           });
           break;
@@ -5528,8 +5528,8 @@ function ChatViewContent(props: ChatViewProps) {
       }
     };
 
-    window.addEventListener(CODEX_MICRO_CHAT_COMMAND_EVENT, onCodexMicroCommand);
-    return () => window.removeEventListener(CODEX_MICRO_CHAT_COMMAND_EVENT, onCodexMicroCommand);
+    window.addEventListener(AGENT_MICRO_CHAT_COMMAND_EVENT, onAgentMicroCommand);
+    return () => window.removeEventListener(AGENT_MICRO_CHAT_COMMAND_EVENT, onAgentMicroCommand);
   }, [
     activePendingApproval,
     composerDraftTarget,

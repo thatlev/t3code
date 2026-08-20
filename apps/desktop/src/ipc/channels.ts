@@ -11,11 +11,11 @@ export const SET_REMOTE_ACCESS_ENABLED_CHANNEL = "desktop:set-remote-access-enab
 export const PROBE_REMOTE_EDITORS_CHANNEL = "desktop:probe-remote-editors";
 export const MENU_ACTION_CHANNEL = "desktop:menu-action";
 export const QUIT_SHORTCUT_CHANNEL = "desktop:quit-shortcut";
-export const CODEX_MICRO_COMMAND_CHANNEL = "desktop:codex-micro-command";
-export const CODEX_MICRO_TRANSPORT_GET_STATE_CHANNEL = "desktop:codex-micro-transport-get-state";
-export const CODEX_MICRO_TRANSPORT_SEND_REPORT_CHANNEL =
-  "desktop:codex-micro-transport-send-report";
-export const CODEX_MICRO_TRANSPORT_EVENT_CHANNEL = "desktop:codex-micro-transport-event";
+export const AGENT_MICRO_COMMAND_CHANNEL = "desktop:agent-micro-command";
+export const AGENT_MICRO_TRANSPORT_GET_STATE_CHANNEL = "desktop:agent-micro-transport-get-state";
+export const AGENT_MICRO_TRANSPORT_SEND_REPORT_CHANNEL =
+  "desktop:agent-micro-transport-send-report";
+export const AGENT_MICRO_TRANSPORT_EVENT_CHANNEL = "desktop:agent-micro-transport-event";
 export const OPEN_THREAD_WINDOW_CHANNEL = "desktop:open-thread-window";
 export const CLAIM_THREAD_WINDOW_CHANNEL = "desktop:claim-thread-window";
 export const THREAD_WINDOW_SCOPE_CHANNEL = "desktop:thread-window-scope";

@@ -61,7 +61,7 @@ import {
   createKeybindingsUpdateToastController,
   type KeybindingsUpdateToastController,
 } from "../components/KeybindingsUpdateToast.logic";
-import { CodexMicroController } from "../codexMicro/controller";
+import { AgentMicroController } from "../agentMicro/controller";
 
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
@@ -128,7 +128,7 @@ function RootRouteView() {
   const appShell = (
     <CommandPalette>
       <AppSidebarLayout>
-        {primaryEnvironmentAuthenticated ? <CodexMicroController /> : null}
+        {primaryEnvironmentAuthenticated ? <AgentMicroController /> : null}
         <Outlet />
       </AppSidebarLayout>
     </CommandPalette>

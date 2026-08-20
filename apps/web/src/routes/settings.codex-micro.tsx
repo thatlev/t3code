@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import { CodexMicroSettings } from "../components/settings/CodexMicroSettings";
+import { AgentMicroSettings } from "../components/settings/AgentMicroSettings";
 
 export const Route = createFileRoute("/settings/codex-micro")({
-  component: CodexMicroSettings,
+  component: AgentMicroSettings,
 });

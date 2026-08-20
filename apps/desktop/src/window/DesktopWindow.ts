@@ -284,11 +284,11 @@ export function isRetryableDevelopmentRendererLoadFailure(input: {
   );
 }
 
-export function selectCodexMicroBluetoothDevice(
+export function selectAgentMicroBluetoothDevice(
   devices: ReadonlyArray<Pick<Electron.BluetoothDevice, "deviceId" | "deviceName">>,
 ): string | null {
   // The iPhone advertises "AgentMicro"; builds before the rename advertised
-  // "Codex Micro". Match both so an older phone build still pairs.
+  // "AgentMicro". Match both so an older phone build still pairs.
   const namedRemote = devices.find(
     (device) =>
       device.deviceName.trim().toLowerCase() === "agentmicro" ||
@@ -609,7 +609,7 @@ export const make = Effect.gen(function* () {
     let bluetoothSelectionFiber: Fiber.Fiber<void, never> | undefined;
     window.webContents.on("select-bluetooth-device", (event, devices, callback) => {
       event.preventDefault();
-      const deviceId = selectCodexMicroBluetoothDevice(devices);
+      const deviceId = selectAgentMicroBluetoothDevice(devices);
       if (deviceId !== null) {
         if (bluetoothSelectionFiber !== undefined) {
           const fiber = bluetoothSelectionFiber;
